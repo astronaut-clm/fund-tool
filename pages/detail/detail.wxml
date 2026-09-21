@@ -1,0 +1,89 @@
+<view class="page">
+  <!-- 估值区 -->
+  <view wx:if="{{loading}}" class="loading">加载中…</view>
+
+  <view wx:elif="{{fund}}" class="hero card">
+    <view class="hero-head">
+      <view class="hero-title">
+        <view class="hero-name">{{fund.name}}</view>
+      </view>
+      <view class="hero-watch {{inWatchlist ? 'on' : ''}}" bindtap="toggleWatch">
+        {{inWatchlist ? '已添加' : '＋ 添加'}}
+      </view>
+    </view>
+
+    <view class="hero-info">
+      <text class="info-item code">{{fund.code}}</text>
+      <text wx:if="{{fund.ftypeText}}" class="info-item">{{fund.ftypeText}}</text>
+      <text wx:if="{{fund.sizeText}}" class="info-item">{{fund.sizeText}}</text>
+    </view>
+
+    <view class="hero-main">
+      <view class="hero-item main">
+        <view class="hero-value {{fund.cls}}">{{fund.pctText}}</view>
+        <view class="hero-label">估算涨幅<text wx:if="{{today}}">({{today}})</text></view>
+      </view>
+      <view class="hero-item">
+        <view class="hero-value {{fund.lastDayCls}}">{{fund.lastDayPctText}}</view>
+        <view class="hero-label">日涨幅<text wx:if="{{fund.lastDayDate}}">({{fund.lastDayDate}})</text></view>
+      </view>
+      <view class="hero-item">
+        <view class="hero-value">{{fund.prevNavText}}</view>
+        <view class="hero-label">净值<text wx:if="{{fund.prevNavDate}}">({{fund.prevNavDate}})</text></view>
+      </view>
+    </view>
+
+    <view wx:if="{{fund.msg}}" class="hero-msg">{{fund.msg}}</view>
+  </view>
+
+  <view wx:elif="{{!loading}}" class="loading">暂无数据，请下拉重试</view>
+
+  <!-- 当日走势 -->
+  <view wx:if="{{trend}}" class="card chart-card">
+    <view class="chart-tip {{touchTip ? 'show' : ''}}">{{touchTip || trend.points[trend.points.length-1].t}}</view>
+    <view class="chart-wrap">
+      <canvas
+        type="2d"
+        id="trendCanvas"
+        class="chart"
+        bindtouchstart="onTouchChart"
+        bindtouchmove="onTouchChart"
+        bindtouchend="onTouchEnd"
+        bindtouchcancel="onTouchEnd"
+      ></canvas>
+    </view>
+  </view>
+
+  <view wx:elif="{{trendLoaded && fund}}" class="card chart-empty">
+    <text>当日分时暂不可用</text>
+    <text class="chart-empty-sub">当前非交易时段或暂无可用分时数据</text>
+  </view>
+
+  <!-- 重仓股票 -->
+  <view wx:if="{{rows.length}}" class="table-section">
+    <view class="section-head">
+      <text class="section-title">重仓股票</text>
+      <text class="section-extra">{{fund.periodText}}</text>
+    </view>
+
+    <view class="card table">
+      <view class="tr th">
+        <text class="td name">股票名称</text>
+        <text class="td num">涨跌幅</text>
+        <text class="td num">持仓占比</text>
+      </view>
+      <view class="tr" wx:for="{{rows}}" wx:key="code">
+        <view class="td name">
+          <text class="s-name">{{item.name}}</text>
+          <text class="s-code">{{item.code}}</text>
+        </view>
+        <text class="td num {{item.cls}}">{{item.pctText}}</text>
+        <text class="td num">{{item.weightText}}</text>
+      </view>
+    </view>
+  </view>
+
+  <view wx:elif="{{fund && !fund.hasPct}}" class="note solo">
+    该基金暂无当日估值，仅展示持仓与上一净值。
+  </view>
+</view>

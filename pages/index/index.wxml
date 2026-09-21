@@ -1,0 +1,67 @@
+<view class="page">
+  <!-- 搜索 -->
+  <view class="search-bar">
+    <input
+      class="search-input"
+      value="{{keyword}}"
+      placeholder="搜索基金代码 / 名称，如 005827"
+      placeholder-class="ph"
+      confirm-type="search"
+      bindinput="onInput"
+      bindfocus="onFocus"
+    />
+    <text wx:if="{{keyword}}" class="clear-btn" bindtap="onClearSearch">✕</text>
+  </view>
+
+  <!-- 搜索结果 -->
+  <view wx:if="{{showResults}}" class="results card">
+    <view wx:if="{{searching}}" class="result-tip">搜索中…</view>
+    <view wx:elif="{{!results.length}}" class="result-tip">未找到相关基金</view>
+    <view
+      wx:for="{{results}}"
+      wx:key="code"
+      class="result-item"
+      bindtap="onPickFund"
+      data-code="{{item.code}}"
+    >
+      <view class="result-main">
+        <text class="result-name">{{item.name}}</text>
+        <text class="result-sub">{{item.code}}<text wx:if="{{item.type}}"> · {{item.type}}</text></text>
+      </view>
+      <text class="result-add {{item.added ? 'added' : ''}}">{{item.added ? '已添加' : '添加'}}</text>
+    </view>
+  </view>
+
+  <!-- 自选列表 -->
+  <view wx:if="{{funds.length && !showResults}}" class="list">
+    <view class="section-head">
+      <text class="section-title">我的自选</text>
+    </view>
+
+    <view
+      wx:for="{{funds}}"
+      wx:key="code"
+      class="fund card"
+      bindtap="goDetail"
+      data-code="{{item.code}}"
+    >
+      <view class="fund-left">
+        <view class="fund-name">{{item.name}}</view>
+        <view class="fund-sub">
+          <text class="fund-code">{{item.code}}</text>
+        </view>
+      </view>
+      <view class="fund-right">
+        <view class="fund-pct {{item.cls}}">{{item.pctText}}</view>
+        <view class="fund-nav">净值 {{item.hasVal ? item.navText : '--'}}</view>
+      </view>
+    </view>
+  </view>
+
+  <!-- 空状态 -->
+  <view wx:if="{{!funds.length && !showResults}}" class="empty">
+    <view class="empty-icon">＋</view>
+    <view class="empty-title">还没有自选基金</view>
+    <view class="empty-desc">点击上方搜索添加基金</view>
+  </view>
+</view>

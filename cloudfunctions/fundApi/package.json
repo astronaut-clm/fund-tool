@@ -1,0 +1,12 @@
+{
+  "name": "fundApi",
+  "version": "1.0.0",
+  "description": "基金估值数据源代理（天天基金公开接口）",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"no test\" && exit 0"
+  },
+  "dependencies": {},
+  "author": "",
+  "license": "MIT"
+}
