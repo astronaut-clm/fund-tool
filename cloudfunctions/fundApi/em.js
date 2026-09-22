@@ -7,6 +7,21 @@ const https = require('https');
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
+// 复用 TCP/TLS 连接，避免每次握手（详情页每分钟 ~10 次分时请求）
+const agent = new https.Agent({
+  keepAlive: true,
+  keepAliveMsecs: 30000,
+  maxSockets: 20,
+  maxFreeSockets: 8
+});
+
+// 基金代码白名单（6 位数字），防止入参被任意拼进 URL
+const RE_FUND_CODE = /^\d{6}$/;
+
+function isValidFundCode(code) {
+  return RE_FUND_CODE.test(String(code || ''));
+}
+
 /** GET 请求，自动跟随一次重定向；ms 可覆盖单请求超时（云函数整体 20s，务必留余量） */
 function req(url, referer, redirect, ms) {
   return new Promise(function (resolve, reject) {
@@ -16,6 +31,7 @@ function req(url, referer, redirect, ms) {
           .get(
             u,
             {
+              agent: agent,
               timeout: ms || 8000,
               headers: {
                 'User-Agent': UA,
@@ -77,6 +93,9 @@ function toSecid(code) {
   return '0.' + c; // 深市 / 北交所
 }
 
+/** 基金类目关键词：过滤联想接口混入的股票（深市/沪市）、指数、板块等非基金结果 */
+const FUND_TYPE_RE = /型|QDII|FOF|ETF|LOF|REITs|理财/i;
+
 /** 基金搜索联想 */
 async function searchFund(key) {
   const k = String(key || '').trim();
@@ -100,7 +119,11 @@ async function searchFund(key) {
         type: it.CATEGORYDESC || it.FTYPE || it.type || ''
       };
     })
-    .filter(Boolean);
+    .filter(function (it) {
+      // 基金类目含"混合型/股票型/债券型/指数型/QDII/FOF/ETF…"；
+      // 股票（深市/沪市）、指数（指数）、板块等不含这些关键词，一律过滤
+      return FUND_TYPE_RE.test(it.type);
+    });
 
   // 输入是 6 位纯数字（基金代码）时，精确查该基金并置顶
   // 联想接口对代码片段匹配不准（如搜"900"返回一堆 00/01 开头），这里兜底
@@ -135,10 +158,12 @@ async function searchFund(key) {
 }
 
 /**
- * 基金基本信息（名称、类型、上一单位净值）
- * 注：ENDNAV 是基金资产规模，不是单位净值，不能用
+ * 基金不变信息（名称、类型、规模）
+ * 注：单位净值与净值日期不再从此接口取（24h 缓存会滞后），
+ *     统一由 getLastDayChange 的 lsjz 接口提供
  */
 async function getFundInfo(fcode) {
+  if (!isValidFundCode(fcode)) return null;
   const url =
     'https://fundmobapi.eastmoney.com/FundMApi/FundBaseTypeInformation.ashx?FCODE=' +
     fcode +
@@ -150,17 +175,16 @@ async function getFundInfo(fcode) {
     code: String(d.FCODE),
     name: String(d.SHORTNAME || d.FNAME || fcode),
     ftype: String(d.FTYPE || ''),
-    size: Number(d.ENDNAV) || 0,
-    prevNav: Number(d.DWJZ) || 0,
-    navDate: String(d.FSRQ || d.PDATE || '')
+    size: Number(d.ENDNAV) || 0
   };
 }
 
 /**
- * 上一交易日涨跌幅：取最新已披露一期的日增长率
- * @returns {{date:string, pct:number}|null}
+ * 上一交易日涨跌幅 + 当日单位净值：取最新已披露一期
+ * @returns {{date:string, pct:number, nav:number|null}|null}
  */
 async function getLastDayChange(fcode) {
+  if (!isValidFundCode(fcode)) return null;
   const url =
     'https://api.fund.eastmoney.com/f10/lsjz?fundCode=' +
     fcode +
@@ -170,85 +194,174 @@ async function getLastDayChange(fcode) {
   const list = (json && json.Data && json.Data.LSJZList) || [];
   for (let i = 0; i < list.length; i++) {
     const pct = parseFloat(list[i].JZZZL);
-    if (Number.isFinite(pct)) return { date: String(list[i].FSRQ || ''), pct: pct };
+    const nav = parseFloat(list[i].DWJZ);
+    if (Number.isFinite(pct)) {
+      return {
+        date: String(list[i].FSRQ || ''),
+        pct: pct,
+        nav: Number.isFinite(nav) ? nav : null
+      };
+    }
   }
   return null;
 }
 
-/** 官方估值（fundgz），所有类型兜底 */
-async function getOfficialEstimate(code) {
-  const url = 'https://fundgz.1234567.com.cn/js/' + code + '.js?rt=' + Date.now();
-  const text = await req(url, 'https://fund.eastmoney.com/', false, 4000);
-  const m = String(text).match(/\{[\s\S]*\}/);
-  if (!m) return null;
-  const j = JSON.parse(m[0]);
-  return {
-    prevNav: Number(j.dwjz) || 0,
-    estNav: Number(j.gsz) || 0,
-    estPct: Number(j.gszzl) || 0,
-    time: String(j.gztime || '')
-  };
+/**
+ * 解析 jjcc 接口返回的持仓表格（可能包含多个报告期）
+ * @returns {{period:string, stocks:Array}[]} 按报告期倒序
+ */
+function parseJjcc(html) {
+  const segs = String(html).split(/<h4[^>]*>/i).slice(1);
+  const out = [];
+  const seenPeriod = {};
+  segs.forEach(function (seg) {
+    const parts = seg.split('</h4>');
+    const head = parts[0] || '';
+    const tableHtml = parts.slice(1).join('</h4>') || seg;
+    const pm = head.match(/(20\d{2}-\d{2}-\d{2})/) || tableHtml.match(/(20\d{2}-\d{2}-\d{2})/);
+    const period = pm ? pm[1] : '';
+    if (!period || seenPeriod[period]) return;
+
+    const stocks = [];
+    const rows = tableHtml.match(/<tr>[\s\S]*?<\/tr>/g) || [];
+    for (let i = 0; i < rows.length; i++) {
+      const tds = [];
+      const re = /<td[^>]*>([\s\S]*?)<\/td>/g;
+      let mm;
+      while ((mm = re.exec(rows[i])) !== null) {
+        tds.push(mm[1].replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').trim());
+      }
+      if (tds.length < 3) continue;
+
+      let codeIdx = -1;
+      for (let k = 0; k < tds.length; k++) {
+        if (/^\d{6}$/.test(tds[k]) || /^[A-Za-z]{1,5}$/.test(tds[k]) || /^\d{5}$/.test(tds[k])) {
+          codeIdx = k;
+          break;
+        }
+      }
+      let ratioIdx = -1;
+      for (let k = 0; k < tds.length; k++) {
+        if (/^\d+(\.\d+)?%$/.test(tds[k])) {
+          ratioIdx = k;
+          break;
+        }
+      }
+      if (codeIdx < 0 || ratioIdx < 0) continue;
+
+      const stockCode = tds[codeIdx];
+      stocks.push({
+        code: stockCode,
+        secid: toSecid(stockCode),
+        name: tds[codeIdx + 1] || stockCode,
+        weight: parseFloat(tds[ratioIdx]) / 100
+      });
+      if (stocks.length >= 10) break;
+    }
+
+    if (stocks.length) {
+      stocks.sort(function (a, b) {
+        return b.weight - a.weight;
+      });
+      seenPeriod[period] = true;
+      out.push({ period: period, stocks: stocks.slice(0, 10) });
+    }
+  });
+  out.sort(function (a, b) {
+    return b.period.localeCompare(a.period);
+  });
+  return out;
 }
 
-/**
- * 前十大持仓（季报快照，非实时！）
- * 注意：必须带 Referer，否则返回空
- */
-async function getHoldings(code) {
+/** 按年份拉取持仓明细（year 为空 = 最新一期） */
+async function getHoldingsByYear(code, year) {
   const url =
     'https://fundf10.eastmoney.com/FundArchivesDatas.aspx?type=jjcc&code=' +
     code +
-    '&topline=10&year=&month=&rt=' +
+    '&topline=10&year=' +
+    (year || '') +
+    '&month=&rt=' +
     Date.now();
   const html = await req(url, 'https://fundf10.eastmoney.com/', false, 6000);
-  if (!html || html.indexOf('<h4') < 0) return null;
+  if (!html || html.indexOf('<h4') < 0) return [];
+  return parseJjcc(html);
+}
 
-  const block = html.split('<h4 class="t">')[1] || html.split('<h4')[1] || html;
-  const period = ((block.match(/(20\d{2}-\d{2}-\d{2})/) || [])[1] || '') ||
-    ((html.match(/(20\d{2}-\d{2}-\d{2})/) || [])[1] || '');
+/**
+ * 前十大持仓（季报快照，非实时！）+ 较上期持仓变动
+ * 注意：必须带 Referer，否则返回空
+ * 每只股票附加：weightDelta（较上期变动，百分点）或 isNew（上期未持有）
+ */
+async function getHoldings(code) {
+  if (!isValidFundCode(code)) return null;
+  const periods = await getHoldingsByYear(code, '');
+  if (!periods.length) return null;
+  const cur = periods[0];
 
-  const stocks = [];
-  const rows = block.match(/<tr>[\s\S]*?<\/tr>/g) || [];
-  for (let i = 0; i < rows.length; i++) {
-    const tds = [];
-    const re = /<td[^>]*>([\s\S]*?)<\/td>/g;
-    let mm;
-    while ((mm = re.exec(rows[i])) !== null) {
-      tds.push(mm[1].replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').trim());
+  // year 为空时通常只返回最新一期；再拉同年报告期找上一期
+  let list = periods;
+  if (periods.length < 2) {
+    try {
+      const sameYear = await getHoldingsByYear(code, cur.period.slice(0, 4));
+      if (sameYear.length > list.length) list = sameYear;
+    } catch (e) {
+      /* 较上期降级为 -- */
     }
-    if (tds.length < 3) continue;
-
-    let codeIdx = -1;
-    for (let k = 0; k < tds.length; k++) {
-      if (/^\d{6}$/.test(tds[k]) || /^[A-Za-z]{1,5}$/.test(tds[k]) || /^\d{5}$/.test(tds[k])) {
-        codeIdx = k;
-        break;
-      }
-    }
-    let ratioIdx = -1;
-    for (let k = 0; k < tds.length; k++) {
-      if (/^\d+(\.\d+)?%$/.test(tds[k])) {
-        ratioIdx = k;
-        break;
-      }
-    }
-    if (codeIdx < 0 || ratioIdx < 0) continue;
-
-    const stockCode = tds[codeIdx];
-    stocks.push({
-      code: stockCode,
-      secid: toSecid(stockCode),
-      name: tds[codeIdx + 1] || stockCode,
-      weight: parseFloat(tds[ratioIdx]) / 100
-    });
-    if (stocks.length >= 10) break;
   }
 
-  if (!stocks.length) return null;
-  stocks.sort(function (a, b) {
-    return b.weight - a.weight;
+  let prev = null;
+  const idx = list.findIndex(function (p) { return p.period === cur.period; });
+  if (idx >= 0 && idx + 1 < list.length) prev = list[idx + 1];
+  if (!prev) {
+    // 最新一期是 Q1 报告时，上一期为上一年年报
+    try {
+      const older = await getHoldingsByYear(code, String(Number(cur.period.slice(0, 4)) - 1));
+      if (older.length) prev = older[0];
+    } catch (e) {
+      /* 较上期降级为 -- */
+    }
+  }
+
+  const prevMap = {};
+  if (prev) {
+    prev.stocks.forEach(function (s) {
+      prevMap[s.code] = s.weight;
+    });
+  }
+  cur.stocks.forEach(function (s) {
+    if (prevMap[s.code] !== undefined) {
+      s.weightDelta = Math.round((s.weight - prevMap[s.code]) * 10000) / 100; // 百分点
+    } else {
+      s.isNew = true;
+    }
   });
-  return { period: period, stocks: stocks.slice(0, 10) };
+
+  return { period: cur.period, prevPeriod: prev ? prev.period : '', stocks: cur.stocks };
+}
+
+/**
+ * 个股所属行业（东财 push2 批量，f100=行业）
+ * 注：push2 对云 IP 偶发限流，失败返回空 map，前端不展示行业即可
+ */
+async function getIndustries(codes) {
+  if (!codes || !codes.length) return {};
+  const url =
+    'https://push2.eastmoney.com/api/qt/ulist.np/get?ut=bd1d9ddb04089700cf9c27f6f7426281&fltt=2&invt=2&fields=f12,f14,f100&secids=' +
+    codes.map(toSecid).join(',');
+  try {
+    const j = JSON.parse(await req(url, 'https://quote.eastmoney.com/', false, 4000));
+    let diff = (j && j.data && j.data.diff) || [];
+    if (!Array.isArray(diff)) {
+      diff = Object.keys(diff).map(function (k) { return diff[k]; });
+    }
+    const map = {};
+    diff.forEach(function (it) {
+      if (it && it.f12 && it.f100) map[String(it.f12)] = String(it.f100);
+    });
+    return map;
+  } catch (e) {
+    return {};
+  }
 }
 
 /**
@@ -280,7 +393,9 @@ function parseTencent(text) {
     const price = Number(f[3]);
     const prevClose = Number(f[4]);
     if (!Number.isFinite(price) || price <= 0 || !Number.isFinite(prevClose)) return;
-    map[m[1]] = { price: price, prevClose: prevClose, pct: Number(f[32]) || 0 };
+    // f[30] 为行情时间 "YYYYMMDDHHMMSS"，取日期部分 YYYYMMDD
+    const date = String(f[30] || '').slice(0, 8);
+    map[m[1]] = { price: price, prevClose: prevClose, pct: Number(f[32]) || 0, date: date };
   });
   return map;
 }
@@ -295,10 +410,13 @@ function parseSina(text) {
     const price = Number(f[3]);
     const prevClose = Number(f[2]);
     if (!Number.isFinite(price) || price <= 0 || !Number.isFinite(prevClose) || prevClose <= 0) return;
+    // f[30] 为日期 "YYYY-MM-DD"，取数字部分 YYYYMMDD
+    const date = String(f[30] || '').replace(/\D/g, '').slice(0, 8);
     map[m[1]] = {
       price: price,
       prevClose: prevClose,
-      pct: Number(((price / prevClose - 1) * 100).toFixed(3))
+      pct: Number(((price / prevClose - 1) * 100).toFixed(3)),
+      date: date
     };
   });
   return map;
@@ -314,29 +432,70 @@ async function fetchBySource(source, codes) {
   return parseSina(t);
 }
 
-/** 批量行情：腾讯主、新浪兜底，最终按 secid + 纯 code 双索引返回 */
+/**
+ * 批量行情：腾讯主、新浪兜底，最终按 secid + 纯 code 双索引返回
+ * - 分片：每批 50 个代码（避免单 URL 过长被网关拒绝）
+ * - 兜底只补缺失：第一源缺失的代码再交给第二源，不重复拉取已成功的
+ */
 async function getQuotes(secids) {
   if (!secids || !secids.length) return {};
 
   const codes = secids.map(toTxCode).filter(Boolean);
   if (!codes.length) return {};
 
+  // secid -> txCode 映射，便于回填
+  const secidToTx = {};
+  secids.forEach(function (secid) {
+    const tx = toTxCode(secid);
+    if (tx) secidToTx[secid] = tx;
+  });
+
   const result = {};
-  for (let i = 0; i < 2; i++) {
-    try {
-      const parsed = await fetchBySource(i === 0 ? 'tencent' : 'sina', codes);
-      codes.forEach(function (c) {
-        if (parsed[c]) result[c] = parsed[c];
-      });
-      if (codes.every(function (c) { return result[c]; })) break;
-    } catch (e) {
-      /* 换下一个源 */
-    }
+  const BATCH = 50;
+
+  // 分片：每批 50 个代码
+  function chunk(arr, n) {
+    const out = [];
+    for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n));
+    return out;
+  }
+
+  // 第一源：腾讯，按分片并发
+  const txBatches = chunk(codes, BATCH);
+  await Promise.all(
+    txBatches.map(async function (batch) {
+      try {
+        const parsed = await fetchBySource('tencent', batch);
+        batch.forEach(function (c) {
+          if (parsed[c]) result[c] = parsed[c];
+        });
+      } catch (e) {
+        /* 该批走兜底 */
+      }
+    })
+  );
+
+  // 第二源：新浪，只补缺失
+  const missing = codes.filter(function (c) { return !result[c]; });
+  if (missing.length) {
+    const sinaBatches = chunk(missing, BATCH);
+    await Promise.all(
+      sinaBatches.map(async function (batch) {
+        try {
+          const parsed = await fetchBySource('sina', batch);
+          batch.forEach(function (c) {
+            if (parsed[c]) result[c] = parsed[c];
+          });
+        } catch (e) {
+          /* 放弃该批 */
+        }
+      })
+    );
   }
 
   const map = {};
-  secids.forEach(function (secid) {
-    const v = result[toTxCode(secid)];
+  Object.keys(secidToTx).forEach(function (secid) {
+    const v = result[secidToTx[secid]];
     if (v) {
       map[secid] = v;
       map[secid.slice(secid.indexOf('.') + 1)] = v;
@@ -374,7 +533,9 @@ async function getTrend(secid) {
       });
     });
     if (points.length < 2) return null;
-    return { preClose: preClose, points: points };
+    // 分时数据所属日期（YYYYMMDD），用于判断是否为当天数据
+    const date = String((node.data.date || '') + '');
+    return { date: date, preClose: preClose, points: points };
   } catch (e) {
     return null;
   }
@@ -387,7 +548,7 @@ module.exports = {
   searchFund: searchFund,
   getFundInfo: getFundInfo,
   getLastDayChange: getLastDayChange,
-  getOfficialEstimate: getOfficialEstimate,
   getHoldings: getHoldings,
+  getIndustries: getIndustries,
   getQuotes: getQuotes
 };

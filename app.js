@@ -1,3 +1,5 @@
+const config = require('./utils/config.js');
+
 App({
   globalData: {},
 
@@ -7,7 +9,7 @@ App({
       return;
     }
     wx.cloud.init({
-      env: 'cloud1-d8gg1i5ut09faeb83',
+      env: config.cloudEnv,
       traceUser: true
     });
   }

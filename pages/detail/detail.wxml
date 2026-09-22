@@ -8,7 +8,7 @@
         <view class="hero-name">{{fund.name}}</view>
       </view>
       <view class="hero-watch {{inWatchlist ? 'on' : ''}}" bindtap="toggleWatch">
-        {{inWatchlist ? '已添加' : '＋ 添加'}}
+        {{inWatchlist ? '已添加' : '＋ 自选'}}
       </view>
     </view>
 
@@ -54,7 +54,14 @@
     </view>
   </view>
 
-  <view wx:elif="{{trendLoaded && fund}}" class="card chart-empty">
+  <view wx:elif="{{!trendLoaded && fund && !fund.isBond}}" class="card chart-card chart-placeholder">
+    <view class="chart-tip"></view>
+    <view class="chart-wrap chart-skeleton">
+      <text class="chart-skeleton-text">走势加载中…</text>
+    </view>
+  </view>
+
+  <view wx:elif="{{trendLoaded && fund && !fund.isBond}}" class="card chart-empty">
     <text>当日分时暂不可用</text>
     <text class="chart-empty-sub">当前非交易时段或暂无可用分时数据</text>
   </view>
@@ -63,27 +70,38 @@
   <view wx:if="{{rows.length}}" class="table-section">
     <view class="section-head">
       <text class="section-title">重仓股票</text>
-      <text class="section-extra">{{fund.periodText}}</text>
+      <text class="section-extra">{{fund.coverageText}}{{fund.coverageText && fund.periodText ? ' · ' : ''}}{{fund.periodText}}</text>
     </view>
 
     <view class="card table">
       <view class="tr th">
-        <text class="td name">股票名称</text>
-        <text class="td num">涨跌幅</text>
+        <text class="td name">名称</text>
+        <text class="td num">涨幅</text>
         <text class="td num">持仓占比</text>
+        <text class="td num">较上期</text>
       </view>
       <view class="tr" wx:for="{{rows}}" wx:key="code">
         <view class="td name">
           <text class="s-name">{{item.name}}</text>
-          <text class="s-code">{{item.code}}</text>
+          <view class="s-sub">
+            <text class="s-code">{{item.code}}</text>
+            <text wx:if="{{item.industry}}" class="s-ind">{{item.industry}}</text>
+          </view>
         </view>
-        <text class="td num {{item.cls}}">{{item.pctText}}</text>
+        <view class="td num quote">
+          <text class="{{item.cls}}">{{item.pctText}}</text>
+        </view>
         <text class="td num">{{item.weightText}}</text>
+        <view class="td num">
+          <text wx:if="{{item.isNew}}" class="up">新增</text>
+          <text wx:elif="{{item.deltaText}}" class="{{item.deltaCls}}">{{item.deltaText}}{{item.deltaArrow}}</text>
+          <text wx:else class="flat">--</text>
+        </view>
       </view>
     </view>
   </view>
 
-  <view wx:elif="{{fund && !fund.hasPct}}" class="note solo">
+  <view wx:elif="{{fund && !fund.hasPct && !fund.isBond}}" class="note solo">
     该基金暂无当日估值，仅展示持仓与上一净值。
   </view>
 </view>

@@ -1,34 +1,60 @@
-<view class="page">
-  <!-- 搜索 -->
-  <view class="search-bar">
+<view class="page" bindtap="onPageTap">
+  <!-- 搜索（catchtap 阻止冒泡，避免点搜索框时收起） -->
+  <view class="search-bar" catchtap="onSearchBarTap">
+    <text class="search-icon">🔍</text>
     <input
       class="search-input"
       value="{{keyword}}"
-      placeholder="搜索基金代码 / 名称，如 005827"
+      placeholder="搜索基金代码 / 名称"
       placeholder-class="ph"
       confirm-type="search"
       bindinput="onInput"
-      bindfocus="onFocus"
     />
-    <text wx:if="{{keyword}}" class="clear-btn" bindtap="onClearSearch">✕</text>
+    <text wx:if="{{keyword}}" class="clear-btn" catchtap="onClearSearch">✕</text>
   </view>
 
-  <!-- 搜索结果 -->
-  <view wx:if="{{showResults}}" class="results card">
+  <!-- 搜索历史（搜索时显示，阻止冒泡避免点击历史区域时收起） -->
+  <view wx:if="{{showResults && history.length}}" class="history" catchtap="noop">
+    <view class="history-head">
+      <text class="history-title">搜索历史</text>
+      <text class="history-clear" catchtap="onClearHistory">清空</text>
+    </view>
+    <view class="history-tags">
+      <view
+        wx:for="{{history}}"
+        wx:key="code"
+        class="history-tag"
+        catchtap="onPickHistory"
+        data-code="{{item.code}}"
+      >{{item.name}}</view>
+    </view>
+  </view>
+
+  <!-- 搜索结果（阻止冒泡，点击结果项不收起） -->
+  <view wx:if="{{showResults && keyword}}" class="results card" catchtap="noop">
     <view wx:if="{{searching}}" class="result-tip">搜索中…</view>
     <view wx:elif="{{!results.length}}" class="result-tip">未找到相关基金</view>
     <view
       wx:for="{{results}}"
       wx:key="code"
       class="result-item"
-      bindtap="onPickFund"
-      data-code="{{item.code}}"
     >
-      <view class="result-main">
+      <view
+        class="result-main"
+        catchtap="onPickFund"
+        data-code="{{item.code}}"
+        data-name="{{item.name}}"
+      >
         <text class="result-name">{{item.name}}</text>
         <text class="result-sub">{{item.code}}<text wx:if="{{item.type}}"> · {{item.type}}</text></text>
       </view>
-      <text class="result-add {{item.added ? 'added' : ''}}">{{item.added ? '已添加' : '添加'}}</text>
+      <text
+        class="result-add {{item.added ? 'added' : ''}}"
+        catchtap="onTogglePick"
+        data-code="{{item.code}}"
+        data-name="{{item.name}}"
+        data-index="{{index}}"
+      >{{item.added ? '已添加' : '+ 添加'}}</text>
     </view>
   </view>
 
@@ -38,30 +64,35 @@
       <text class="section-title">我的自选</text>
     </view>
 
-    <view
-      wx:for="{{funds}}"
-      wx:key="code"
-      class="fund card"
-      bindtap="goDetail"
-      data-code="{{item.code}}"
-    >
-      <view class="fund-left">
+    <view class="fund-list">
+      <view
+        wx:for="{{funds}}"
+        wx:key="code"
+        class="fund {{item.cls}} {{dragIndex === index ? 'dragging' : ''}} {{dragOverIndex === index ? 'drag-over' : ''}}"
+        bindtap="goDetail"
+        data-code="{{item.code}}"
+        data-index="{{index}}"
+      >
         <view class="fund-name">{{item.name}}</view>
-        <view class="fund-sub">
-          <text class="fund-code">{{item.code}}</text>
-        </view>
-      </view>
-      <view class="fund-right">
         <view class="fund-pct {{item.cls}}">{{item.pctText}}</view>
-        <view class="fund-nav">净值 {{item.hasVal ? item.navText : '--'}}</view>
+        <view
+          class="drag-handle"
+          catchtouchstart="onDragTouchStart"
+          catchtouchmove="onDragTouchMove"
+          catchtouchend="onDragTouchEnd"
+          data-index="{{index}}"
+          data-code="{{item.code}}"
+        >≡</view>
       </view>
     </view>
   </view>
 
   <!-- 空状态 -->
   <view wx:if="{{!funds.length && !showResults}}" class="empty">
-    <view class="empty-icon">＋</view>
-    <view class="empty-title">还没有自选基金</view>
-    <view class="empty-desc">点击上方搜索添加基金</view>
+    <view class="empty-art">
+      <text class="art-line">帮助您记录</text>
+      <text class="art-main">每一天</text>
+      <text class="art-line">的收支明细</text>
+    </view>
   </view>
 </view>

@@ -1,4 +1,6 @@
 const CODES_KEY = 'FUND_CODES';
+const HISTORY_KEY = 'FUND_SEARCH_HISTORY';
+const HISTORY_MAX = 10;
 
 function getCodes() {
   try {
@@ -10,13 +12,27 @@ function getCodes() {
 }
 
 function setCodes(codes) {
-  wx.setStorageSync(CODES_KEY, codes);
+  try {
+    // 去重，避免重复添加导致列表里出现重复项
+    const seen = {};
+    const list = (Array.isArray(codes) ? codes : []).filter(function (c) {
+      const k = String(c);
+      if (seen[k]) return false;
+      seen[k] = true;
+      return true;
+    });
+    wx.setStorageSync(CODES_KEY, list);
+    return list;
+  } catch (e) {
+    return [];
+  }
 }
 
 function addCode(code) {
   const list = getCodes();
-  if (list.indexOf(code) === -1) {
-    list.push(code);
+  const c = String(code || '');
+  if (c && list.indexOf(c) === -1) {
+    list.push(c);
     setCodes(list);
   }
   return list;
@@ -28,6 +44,37 @@ function removeCode(code) {
   });
   setCodes(list);
   return list;
+}
+
+/** 搜索历史：最多 HISTORY_MAX 条，新的置顶，去重 */
+function getHistory() {
+  try {
+    const v = wx.getStorageSync(HISTORY_KEY);
+    return Array.isArray(v) ? v : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+function addHistory(code, name) {
+  try {
+    const list = getHistory().filter(function (it) {
+      return it.code !== code;
+    });
+    list.unshift({ code: String(code), name: String(name || code) });
+    wx.setStorageSync(HISTORY_KEY, list.slice(0, HISTORY_MAX));
+    return list;
+  } catch (e) {
+    return [];
+  }
+}
+
+function clearHistory() {
+  try {
+    wx.removeStorageSync(HISTORY_KEY);
+  } catch (e) {
+    /* ignore */
+  }
 }
 
 /** 涨跌幅格式化：+1.23% */
@@ -58,6 +105,18 @@ function clsOf(n) {
   return v > 0 ? 'up' : 'down';
 }
 
+/** 补零 */
+function pad2(n) {
+  const v = Number(n);
+  return (v < 10 ? '0' : '') + v;
+}
+
+/** 今天 YYYYMMDD（用于与服务端日期比对） */
+function todayStr(d) {
+  const now = d || new Date();
+  return '' + now.getFullYear() + pad2(now.getMonth() + 1) + pad2(now.getDate());
+}
+
 /** A股交易时段：9:30-11:30 / 13:00-15:00（集合竞价 9:15-9:25 不参与估值） */
 function isTrading(d) {
   const now = d || new Date();
@@ -69,10 +128,7 @@ function isTrading(d) {
 
 function nowText(d) {
   const now = d || new Date();
-  const p = function (n) {
-    return n < 10 ? '0' + n : '' + n;
-  };
-  return p(now.getHours()) + ':' + p(now.getMinutes()) + ':' + p(now.getSeconds());
+  return pad2(now.getHours()) + ':' + pad2(now.getMinutes()) + ':' + pad2(now.getSeconds());
 }
 
 module.exports = {
@@ -80,10 +136,15 @@ module.exports = {
   setCodes: setCodes,
   addCode: addCode,
   removeCode: removeCode,
+  getHistory: getHistory,
+  addHistory: addHistory,
+  clearHistory: clearHistory,
   fmtPct: fmtPct,
   fmtNav: fmtNav,
   fmtDate: fmtDate,
   clsOf: clsOf,
+  pad2: pad2,
+  todayStr: todayStr,
   isTrading: isTrading,
   nowText: nowText
 };

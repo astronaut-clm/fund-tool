@@ -1,5 +1,7 @@
 .page {
   padding: 20rpx 24rpx 40rpx;
+  min-height: 100vh;
+  box-sizing: border-box;
 }
 
 .search-bar {
@@ -7,25 +9,36 @@
   display: flex;
   align-items: center;
   background: #ffffff;
-  border-radius: 16rpx;
-  padding: 0 24rpx;
-  height: 72rpx;
+  border-radius: 36rpx;
+  padding: 0 28rpx;
+  height: 76rpx;
+  box-shadow: 0 4rpx 16rpx rgba(47, 111, 237, 0.08);
+}
+
+.search-icon {
+  font-size: 28rpx;
+  color: #b0b6bd;
+  margin-right: 16rpx;
+  flex-shrink: 0;
 }
 
 .search-input {
   flex: 1;
   font-size: 28rpx;
-  height: 72rpx;
+  height: 76rpx;
+  color: #1f2329;
 }
 
 .ph {
   color: #b0b6bd;
+  font-size: 27rpx;
 }
 
 .clear-btn {
   color: #b0b6bd;
-  font-size: 30rpx;
+  font-size: 28rpx;
   padding-left: 16rpx;
+  flex-shrink: 0;
 }
 
 .results {
@@ -65,6 +78,7 @@
 }
 
 .result-add {
+  flex-shrink: 0;
   font-size: 24rpx;
   color: #2f6fed;
   padding: 8rpx 20rpx;
@@ -90,70 +104,121 @@
   font-weight: 600;
 }
 
-.fund {
+/* 搜索历史（搜索时显示在搜索栏下方） */
+.history {
+  margin: 16rpx 0 0;
+  padding: 20rpx 24rpx;
+  background: #ffffff;
+  border-radius: 16rpx;
+}
+
+.history-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 26rpx 24rpx;
-  margin-bottom: 16rpx;
+  padding: 0 8rpx 16rpx;
 }
 
-.fund-left {
-  flex: 1;
-  min-width: 0;
-  padding-right: 20rpx;
+.history-title {
+  font-size: 24rpx;
+  color: #8a9099;
 }
 
-.fund-name {
-  font-size: 30rpx;
-  line-height: 1.3;
+.history-clear {
+  font-size: 24rpx;
+  color: #b0b6bd;
+}
+
+.history-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16rpx;
+  padding: 0 8rpx;
+}
+
+.history-tag {
+  font-size: 24rpx;
+  color: #4b5563;
+  background: #f5f6f8;
+  border-radius: 8rpx;
+  padding: 10rpx 20rpx;
+  max-width: 360rpx;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.fund-sub {
-  margin-top: 10rpx;
+.fund-list {
+  background: #ffffff;
+  border-radius: 16rpx;
+  overflow: hidden;
+}
+
+.fund {
   display: flex;
   align-items: center;
+  justify-content: space-between;
+  padding: 18rpx 24rpx;
+  background: #ffffff;
+  border-bottom: 1rpx solid #f0f1f3;
+  overflow: hidden;
 }
 
-.fund-code {
-  font-size: 22rpx;
-  color: #8a9099;
+.fund:last-child {
+  border-bottom: none;
 }
 
-.tag {
-  margin-left: 12rpx;
-  font-size: 20rpx;
-  color: #6b7280;
-  background: #f1f3f5;
-  border-radius: 6rpx;
-  padding: 2rpx 10rpx;
+/* 涨跌背景色：渐变 */
+.fund.up {
+  background: linear-gradient(90deg, rgba(224, 64, 63, 0.12) 0%, #ffffff 100%);
 }
 
-.fund-right {
-  text-align: right;
-  min-width: 190rpx;
+.fund.down {
+  background: linear-gradient(90deg, rgba(18, 160, 92, 0.12) 0%, #ffffff 100%);
+}
+
+.fund.flat {
+  background: #ffffff;
+}
+
+.fund-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 30rpx;
+  line-height: 1.3;
+  color: #1f2329;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding-right: 20rpx;
 }
 
 .fund-pct {
-  font-size: 40rpx;
+  font-size: 34rpx;
   font-weight: 600;
   line-height: 1.1;
+  flex-shrink: 0;
 }
 
-.fund-nav {
-  font-size: 22rpx;
-  color: #8a9099;
-  margin-top: 8rpx;
-}
-
-.foot-tip {
+/* 拖拽手柄 */
+.drag-handle {
+  flex-shrink: 0;
+  width: 60rpx;
   text-align: center;
-  font-size: 22rpx;
-  color: #b0b6bd;
-  padding-top: 20rpx;
+  font-size: 36rpx;
+  color: #cfd4da;
+  margin-left: 12rpx;
+}
+
+/* 拖拽中：当前项高亮 */
+.fund.dragging {
+  opacity: 0.5;
+  background: #eef1f5 !important;
+}
+
+/* 落点指示 */
+.fund.drag-over {
+  border-top: 4rpx solid #2f6fed;
 }
 
 .empty {
@@ -175,6 +240,59 @@
 .empty-title {
   font-size: 30rpx;
   color: #4b5563;
+}
+
+.empty-art {
+  margin-top: 8rpx;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16rpx;
+}
+
+.empty-art .art-line {
+  font-size: 32rpx;
+  font-weight: 600;
+  color: #2f3a4a;
+  letter-spacing: 8rpx;
+}
+
+.empty-art .art-main {
+  font-size: 96rpx;
+  font-weight: 900;
+  letter-spacing: 16rpx;
+  line-height: 1.2;
+  /* 渐变文字：兼容写法 */
+  background: linear-gradient(90deg, #2f6fed 0%, #9b30ff 50%, #e0403f 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  /* 轻微发光，增强醒目度 */
+  filter: drop-shadow(0 4rpx 12rpx rgba(106, 79, 240, 0.35));
+  position: relative;
+  padding: 4rpx 32rpx;
+}
+
+.empty-art .art-main::before,
+.empty-art .art-main::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  width: 80rpx;
+  height: 4rpx;
+  border-radius: 2rpx;
+  background: linear-gradient(90deg, transparent, #6a4ff0, transparent);
+}
+
+.empty-art .art-main::before {
+  right: 100%;
+  margin-right: 12rpx;
+}
+
+.empty-art .art-main::after {
+  left: 100%;
+  margin-left: 12rpx;
 }
 
 .empty-desc {
