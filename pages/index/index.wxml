@@ -61,21 +61,28 @@
   <!-- 自选列表 -->
   <view wx:if="{{funds.length && !showResults}}" class="list">
     <view class="section-head">
-      <text class="section-title">我的自选</text>
+      <text class="section-title">{{editMode ? '管理自选' : '我的自选'}}</text>
+      <view class="section-actions">
+        <text wx:if="{{editMode}}" class="action-link select-all" catchtap="onSelectAll">{{allSelected ? '取消全选' : '全选'}}</text>
+        <text wx:if="{{editMode}}" class="action-link delete {{selectedCount ? 'active' : ''}}" catchtap="onDeleteSelected">删除{{selectedCount ? '(' + selectedCount + ')' : ''}}</text>
+        <text class="gear" catchtap="onToggleEdit">{{editMode ? '退出' : '⚙'}}</text>
+      </view>
     </view>
 
     <view class="fund-list">
       <view
         wx:for="{{funds}}"
         wx:key="code"
-        class="fund {{item.cls}} {{dragIndex === index ? 'dragging' : ''}} {{dragOverIndex === index ? 'drag-over' : ''}}"
-        bindtap="goDetail"
+        class="fund {{item.cls}} {{dragIndex === index ? 'dragging' : ''}} {{dragOverIndex === index ? 'drag-over' : ''}} {{editMode && item.selected ? 'selected' : ''}}"
+        catchtap="onFundTap"
         data-code="{{item.code}}"
         data-index="{{index}}"
       >
+        <view wx:if="{{editMode}}" class="check-box {{item.selected ? 'checked' : ''}}">{{item.selected ? '✓' : ''}}</view>
         <view class="fund-name">{{item.name}}</view>
-        <view class="fund-pct {{item.cls}}">{{item.pctText}}</view>
+        <view wx:if="{{!editMode}}" class="fund-pct {{item.cls}}">{{item.pctText}}</view>
         <view
+          wx:if="{{editMode}}"
           class="drag-handle"
           catchtouchstart="onDragTouchStart"
           catchtouchmove="onDragTouchMove"
@@ -85,6 +92,8 @@
         >≡</view>
       </view>
     </view>
+
+    <view wx:if="{{editMode}}" class="edit-hint">勾选基金后可批量删除，拖拽 ≡ 手柄可排序</view>
   </view>
 
   <!-- 空状态 -->

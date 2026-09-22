@@ -104,6 +104,62 @@
   font-weight: 600;
 }
 
+.section-actions {
+  display: flex;
+  align-items: center;
+  gap: 24rpx;
+}
+
+.action-link {
+  font-size: 24rpx;
+  color: #2f6fed;
+}
+
+.action-link.delete {
+  color: #b0b6bd;
+}
+
+.action-link.delete.active {
+  color: #e0403f;
+}
+
+.gear {
+  font-size: 32rpx;
+  color: #8a9099;
+  padding-left: 8rpx;
+}
+
+.check-box {
+  flex-shrink: 0;
+  width: 36rpx;
+  height: 36rpx;
+  border: 2rpx solid #cfd4da;
+  border-radius: 50%;
+  margin-right: 16rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22rpx;
+  color: #fff;
+  background: #fff;
+}
+
+.check-box.checked {
+  background: #2f6fed;
+  border-color: #2f6fed;
+}
+
+.fund.selected {
+  background: #eef3ff !important;
+}
+
+.edit-hint {
+  padding: 16rpx 8rpx;
+  font-size: 22rpx;
+  color: #8a9099;
+  text-align: center;
+}
+
 /* 搜索历史（搜索时显示在搜索栏下方） */
 .history {
   margin: 16rpx 0 0;
@@ -208,6 +264,11 @@
   font-size: 36rpx;
   color: #cfd4da;
   margin-left: 12rpx;
+}
+
+/* 编辑模式下拖拽手柄加粗高亮 */
+.fund .drag-handle:active {
+  color: #2f6fed;
 }
 
 /* 拖拽中：当前项高亮 */

@@ -11,7 +11,10 @@ Page({
     funds: [],
     history: [],
     dragIndex: -1,
-    dragOverIndex: -1
+    dragOverIndex: -1,
+    editMode: false,
+    selectedCount: 0,
+    allSelected: false
   },
 
   onLoad() {
@@ -184,14 +187,17 @@ Page({
             dayDate &&
             dayDate === today;
           const pct = useActual ? f.lastDayPct : f.estPct;
+          // 编辑模式下轮询刷新保留勾选状态
+          const old = this.data.funds.find(function (it) { return it.code === f.code; });
           return {
             code: f.code,
             name: f.name,
             pctText: util.fmtPct(pct),
-            cls: util.clsOf(pct)
+            cls: util.clsOf(pct),
+            selected: old ? !!old.selected : false
           };
         });
-        this.setData({ funds: funds });
+        this.setData({ funds: funds, selectedCount: funds.filter(function (it) { return it.selected; }).length });
       })
       .catch((err) => {
         wx.showToast({ title: err.message || '加载失败', icon: 'none', duration: 2500 });
@@ -247,5 +253,82 @@ Page({
   goDetail(e) {
     const code = e.currentTarget.dataset.code;
     wx.navigateTo({ url: '/pages/detail/detail?code=' + code });
+  },
+
+  /** 编辑模式切换 */
+  onToggleEdit() {
+    const editMode = !this.data.editMode;
+    const funds = this.data.funds.map(function (it) {
+      return Object.assign({}, it, { selected: editMode ? it.selected : false });
+    });
+    this.setData({
+      editMode: editMode,
+      funds: funds,
+      selectedCount: funds.filter(function (it) { return it.selected; }).length,
+      allSelected: funds.length > 0 && funds.every(function (it) { return it.selected; })
+    });
+  },
+
+  /** 列表项点击：编辑模式下切换勾选，非编辑模式跳详情 */
+  onFundTap(e) {
+    if (this.data.editMode) {
+      const idx = e.currentTarget.dataset.index;
+      const funds = this.data.funds.slice();
+      funds[idx] = Object.assign({}, funds[idx], { selected: !funds[idx].selected });
+      const selectedCount = funds.filter(function (it) { return it.selected; }).length;
+      this.setData({
+        ['funds[' + idx + '].selected']: funds[idx].selected,
+        selectedCount: selectedCount,
+        allSelected: funds.length > 0 && selectedCount === funds.length
+      });
+    } else {
+      this.goDetail(e);
+    }
+  },
+
+  /** 全选 / 取消全选 */
+  onSelectAll() {
+    const allSelected = this.data.allSelected;
+    const funds = this.data.funds.map(function (it) {
+      return Object.assign({}, it, { selected: !allSelected });
+    });
+    const selectedCount = allSelected ? 0 : funds.length;
+    this.setData({
+      funds: funds,
+      selectedCount: selectedCount,
+      allSelected: !allSelected
+    });
+  },
+
+  /** 删除已勾选的基金 */
+  onDeleteSelected() {
+    const selected = this.data.funds.filter(function (it) { return it.selected; });
+    if (!selected.length) return;
+    const codes = selected.map(function (it) { return it.code; });
+    const self = this;
+    wx.showModal({
+      title: '删除确认',
+      content: '确定从自选移除 ' + selected.length + ' 只基金？',
+      confirmColor: '#e0403f',
+      success: function (res) {
+        if (!res.confirm) return;
+        const remain = util.getCodes().filter(function (c) {
+          return codes.indexOf(c) < 0;
+        });
+        util.setCodes(remain);
+        const funds = self.data.funds.filter(function (it) {
+          return codes.indexOf(it.code) < 0;
+        });
+        self.setData({
+          funds: funds,
+          selectedCount: 0,
+          allSelected: false
+        });
+        if (!funds.length) {
+          self.setData({ editMode: false });
+        }
+        wx.showToast({ title: '已删除', icon: 'success' });
+      }
+    });
   }
 });
