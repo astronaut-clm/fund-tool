@@ -2,6 +2,14 @@ const api = require('../../utils/api.js');
 const util = require('../../utils/util.js');
 const poller = require('../../utils/poller.js');
 
+/** 拖拽震动：自带节流，避免快速拖动时连续触发 */
+function vibrate(type) {
+  const now = Date.now();
+  if (now - (vibrate._t || 0) < 80) return;
+  vibrate._t = now;
+  wx.vibrateShort({ type: type, fail: function () {} });
+}
+
 Page({
   data: {
     keyword: '',
@@ -12,6 +20,7 @@ Page({
     history: [],
     dragIndex: -1,
     dragOverIndex: -1,
+    dragOffsetY: 0,
     editMode: false,
     selectedCount: 0,
     allSelected: false
@@ -221,7 +230,9 @@ Page({
       const rects = res && res[0];
       if (rects && rects.length) this._dragItemH = rects[0].height;
     });
-    this.setData({ dragIndex: idx });
+    // 起手反馈；同时初始化 dragOverIndex，避免首次 move 重复震
+    vibrate('medium');
+    this.setData({ dragIndex: idx, dragOverIndex: idx, dragOffsetY: 0 });
   },
 
   onDragTouchMove(e) {
@@ -232,22 +243,42 @@ Page({
     if (!this._dragItemH) return;
     const funds = this.data.funds;
     const overIndex = Math.max(0, Math.min(funds.length - 1, dragIndex + Math.round(dy / this._dragItemH)));
+    const patch = { dragOffsetY: dy };
     if (overIndex !== this.data.dragOverIndex) {
-      this.setData({ dragOverIndex: overIndex });
+      patch.dragOverIndex = overIndex;
+      // 重算每项让位位移：dragIndex 与 overIndex 之间的项整体平移一格
+      const h = this._dragItemH;
+      patch.funds = funds.map(function (it, i) {
+        let s = 0;
+        if (dragIndex < overIndex) {
+          if (i > dragIndex && i <= overIndex) s = -h;
+        } else if (dragIndex > overIndex) {
+          if (i >= overIndex && i < dragIndex) s = h;
+        }
+        return Object.assign({}, it, { shift: s });
+      });
+      vibrate('light'); // 越过一项边界
     }
+    this.setData(patch);
   },
 
   onDragTouchEnd() {
     const { dragIndex, dragOverIndex, funds } = this.data;
     if (dragIndex < 0 || dragOverIndex < 0 || dragIndex === dragOverIndex) {
-      this.setData({ dragIndex: -1, dragOverIndex: -1 });
+      // 复位 shift
+      const cleared = funds.map(function (it) { return Object.assign({}, it, { shift: 0 }); });
+      this.setData({ funds: cleared, dragIndex: -1, dragOverIndex: -1, dragOffsetY: 0 });
       return;
     }
     const list = funds.slice();
     const moved = list.splice(dragIndex, 1)[0];
+    moved.shift = 0;
     list.splice(dragOverIndex, 0, moved);
+    // 清掉所有 shift
+    list.forEach(function (it) { it.shift = 0; });
     util.setCodes(list.map((f) => f.code));
-    this.setData({ funds: list, dragIndex: -1, dragOverIndex: -1 });
+    this.setData({ funds: list, dragIndex: -1, dragOverIndex: -1, dragOffsetY: 0 });
+    vibrate('light'); // 落位
   },
 
   goDetail(e) {

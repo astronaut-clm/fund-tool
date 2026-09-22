@@ -271,15 +271,23 @@
   color: #2f6fed;
 }
 
-/* 拖拽中：当前项高亮 */
+/* 拖拽中：当前项浮动跟随 */
 .fund.dragging {
-  opacity: 0.5;
-  background: #eef1f5 !important;
+  opacity: 0.92;
+  background: #ffffff !important;
+  box-shadow: 0 12rpx 32rpx rgba(47, 111, 237, 0.22);
+  z-index: 10;
+  position: relative;
 }
 
-/* 落点指示 */
-.fund.drag-over {
-  border-top: 4rpx solid #2f6fed;
+/* 让位项平滑过渡 */
+.fund {
+  transition: transform 0.18s cubic-bezier(0.2, 0, 0, 1);
+}
+
+/* 拖拽中的项不要 transition，跟手 */
+.fund.dragging {
+  transition: none;
 }
 
 .empty {

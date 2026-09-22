@@ -73,7 +73,8 @@
       <view
         wx:for="{{funds}}"
         wx:key="code"
-        class="fund {{item.cls}} {{dragIndex === index ? 'dragging' : ''}} {{dragOverIndex === index ? 'drag-over' : ''}} {{editMode && item.selected ? 'selected' : ''}}"
+        class="fund {{item.cls}} {{dragIndex === index ? 'dragging' : ''}} {{editMode && item.selected ? 'selected' : ''}}"
+        style="{{dragIndex === index ? ('transform: translateY(' + dragOffsetY + 'px);') : (item.shift ? ('transform: translateY(' + item.shift + 'px);') : '')}}"
         catchtap="onFundTap"
         data-code="{{item.code}}"
         data-index="{{index}}"
