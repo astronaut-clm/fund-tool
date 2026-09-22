@@ -56,12 +56,6 @@
   padding: 4rpx 12rpx;
 }
 
-.info-item.bench {
-  color: #2f6fed;
-  background: rgba(47, 111, 237, 0.15);
-  font-weight: 500;
-}
-
 .hero-main {
   margin-top: 28rpx;
   display: flex;
@@ -107,18 +101,47 @@
   padding: 24rpx 20rpx 20rpx;
 }
 
-.chart-tip {
+.chart-header {
   height: 32rpx;
   line-height: 32rpx;
   padding: 0 8rpx;
-  font-size: 22rpx;
-  color: #4b5563;
-  opacity: 0;
-  transition: opacity 0.15s;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
 }
 
-.chart-tip.show {
-  opacity: 1;
+.chart-date {
+  font-size: 22rpx;
+  color: #1f2937;
+}
+
+.chart-cursor {
+  color: #4b5563;
+}
+
+.chart-bench {
+  font-size: 22rpx;
+  color: #2f6fed;
+  font-weight: 500;
+}
+
+.chart-desc {
+  margin-top: 24rpx;
+  padding: 16rpx 8rpx 0;
+  border-top: 1rpx solid #f0f1f3;
+}
+
+.chart-desc-title {
+  font-size: 24rpx;
+  font-weight: 500;
+  color: #4b5563;
+  margin-bottom: 6rpx;
+}
+
+.chart-desc-text {
+  font-size: 22rpx;
+  line-height: 1.6;
+  color: #8a9099;
 }
 
 .chart-wrap {

@@ -13,7 +13,6 @@ function getCodes() {
 
 function setCodes(codes) {
   try {
-    // 去重，避免重复添加导致列表里出现重复项
     const seen = {};
     const list = (Array.isArray(codes) ? codes : []).filter(function (c) {
       const k = String(c);
@@ -85,39 +84,37 @@ function fmtPct(n) {
   return (v > 0 ? '+' : '') + v.toFixed(2) + '%';
 }
 
-/** 净值格式化 */
 function fmtNav(n) {
   if (n === null || n === undefined || n === '' || isNaN(n)) return '--';
   return Number(n).toFixed(4);
 }
 
-/** 日期格式化：YYYY-MM-DD → MM-DD，非法/空返回 '' */
+/** 日期格式化：YYYY-MM-DD → MM-DD */
 function fmtDate(s) {
   const t = String(s || '');
   const m = t.match(/^(\d{4})-(\d{2})-(\d{2})/);
   return m ? m[2] + '-' + m[3] : '';
 }
 
-/** 方向样式 class */
+/** 涨跌方向样式 class */
 function clsOf(n) {
   const v = Number(n);
   if (n === null || n === undefined || isNaN(v) || Math.abs(v) < 0.005) return 'flat';
   return v > 0 ? 'up' : 'down';
 }
 
-/** 补零 */
 function pad2(n) {
   const v = Number(n);
   return (v < 10 ? '0' : '') + v;
 }
 
-/** 今天 YYYYMMDD（用于与服务端日期比对） */
+/** 今天 YYYYMMDD（与服务端日期比对） */
 function todayStr(d) {
   const now = d || new Date();
   return '' + now.getFullYear() + pad2(now.getMonth() + 1) + pad2(now.getDate());
 }
 
-/** A股交易时段：9:30-11:30 / 13:00-15:00（集合竞价 9:15-9:25 不参与估值） */
+/** A股交易时段：9:30-11:30 / 13:00-15:00 */
 function isTrading(d) {
   const now = d || new Date();
   const day = now.getDay();

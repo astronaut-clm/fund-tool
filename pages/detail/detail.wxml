@@ -16,7 +16,6 @@
       <text class="info-item code">{{fund.code}}</text>
       <text wx:if="{{fund.ftypeText}}" class="info-item">{{fund.ftypeText}}</text>
       <text wx:if="{{fund.sizeText}}" class="info-item">{{fund.sizeText}}</text>
-      <text wx:if="{{fund.benchText}}" class="info-item bench">{{fund.benchText}}</text>
     </view>
 
     <view class="hero-main">
@@ -37,11 +36,14 @@
     <view wx:if="{{fund.msg}}" class="hero-msg">{{fund.msg}}</view>
   </view>
 
-  <view wx:elif="{{!loading}}" class="loading">暂无数据，请下拉重试</view>
+  <view wx:else class="loading">暂无数据，请下拉重试</view>
 
   <!-- 当日走势 -->
   <view wx:if="{{trend}}" class="card chart-card">
-    <view class="chart-tip {{touchTip ? 'show' : ''}}">{{touchTip || trend.points[trend.points.length-1].t}}</view>
+    <view class="chart-header">
+      <view class="chart-date">{{trendDateText}}<text wx:if="{{touchPct}}" class="chart-cursor">  {{touchTime}}  <text class="{{touchCls}}">{{touchPct}}</text></text></view>
+      <text wx:if="{{fund.benchText}}" class="chart-bench">{{fund.benchText}}</text>
+    </view>
     <view class="chart-wrap">
       <canvas
         type="2d"
@@ -53,10 +55,14 @@
         bindtouchcancel="onTouchEnd"
       ></canvas>
     </view>
+    <view wx:if="{{fund.benchDesc}}" class="chart-desc">
+      <view class="chart-desc-title">指数介绍</view>
+      <view class="chart-desc-text">{{fund.benchDesc}}</view>
+    </view>
   </view>
 
   <view wx:elif="{{!trendLoaded && fund && !fund.isBond}}" class="card chart-card chart-placeholder">
-    <view class="chart-tip"></view>
+    <view class="chart-header"></view>
     <view class="chart-wrap chart-skeleton">
       <text class="chart-skeleton-text">走势加载中…</text>
     </view>

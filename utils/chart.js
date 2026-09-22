@@ -1,15 +1,4 @@
-/**
- * 分时图绘图逻辑：接收 canvas node + 走势数据 + 选中点，纯绘制
- * 页面只负责喂数据，绘图细节收敛到此处
- */
-
-/**
- * 绘制分时走势图
- * @param {Object} canvas  canvas node
- * @param {Object} size    { width, height }
- * @param {Object} trend   { points:[{t,pct,nav}], prevNav }
- * @param {number} selIdx  选中的 points 下标，-1 表示无选中
- */
+/** 分时图绘制：接收 canvas node + 走势数据 + 选中点，纯绘制 */
 function drawTrend(canvas, size, trend, selIdx) {
   if (!canvas || !size || !trend || !trend.points || trend.points.length < 2) return;
   const ctx = canvas.getContext('2d');
@@ -28,7 +17,7 @@ function drawTrend(canvas, size, trend, selIdx) {
   const chartW = W - padX - 8;
   const chartH = H - padT - padB;
 
-  // y 值域：估算净值，纳入上一净值基准
+  // y 值域：估算净值 + 上一净值基准
   let values = pts.map(function (p) { return p.nav; });
   values.push(trend.prevNav);
   let min = Math.min.apply(null, values);
@@ -37,9 +26,7 @@ function drawTrend(canvas, size, trend, selIdx) {
   min -= span * 0.12;
   max += span * 0.12;
 
-  // x 轴：按点索引均匀分布（不按时间映射）
-  // A 股 241 点（09:30-11:30/13:00-15:00）与原时间压缩映射完全一致；
-  // 港股（午休 12:00-13:00、16:00 收盘）/美股等非 A 股时段自动适配，不会错位
+  // x 轴按索引均布（A 股 241 点与时间压缩映射一致；港股/美股自动适配不错位）
   const xAtIdx = function (i) {
     return padX + (chartW * i) / (pts.length - 1);
   };
@@ -110,7 +97,7 @@ function drawTrend(canvas, size, trend, selIdx) {
   ctx.fillStyle = '#6b7280';
   ctx.fillText('0.00%', padX - 6, yBase);
 
-  // 底部时间轴：动态取首/中/尾三点时间（适配不同市场交易时段）
+  // 底部时间轴：首/中/尾三点（适配不同市场时段）
   ctx.textBaseline = 'top';
   ctx.fillStyle = '#8a9099';
   const mid = Math.round((pts.length - 1) / 2);

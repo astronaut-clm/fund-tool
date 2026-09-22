@@ -1,7 +1,4 @@
-/**
- * 云函数调用封装
- * 第三方金融接口无法在小程序端直连（域名白名单限制），统一由云函数 fundApi 代理
- */
+/** 云函数调用封装（第三方接口需域名白名单，统一走云函数代理） */
 const FUNCTION_NAME = 'fundApi';
 
 function call(action, data) {
@@ -30,19 +27,12 @@ function search(key) {
   return call('search', { key: key });
 }
 
-/**
- * 估值
- * @param {string[]} codes       基金代码列表
- * @param {boolean}  withStocks  是否返回前十大持仓明细（详情页 true，列表页 false）
- */
+/** 估值（withStocks=true 返回前十大持仓明细，详情页用） */
 function estimate(codes, withStocks) {
   return call('estimate', { codes: codes, withStocks: !!withStocks });
 }
 
-/**
- * 当日估算分时（分钟级）
- * @param {string} code
- */
+/** 当日估算分时（分钟级） */
 function trend(code) {
   return call('trend', { code: code });
 }

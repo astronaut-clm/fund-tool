@@ -12,9 +12,12 @@ Page({
     lastTime: '',
     inWatchlist: false,
     trend: null,
+    trendDateText: '',
     trendLoaded: false,
     touchIdx: -1,
-    touchTip: '',
+    touchTime: '',
+    touchPct: '',
+    touchCls: '',
     today: ''
   },
 
@@ -27,17 +30,15 @@ Page({
       guard: () => !!this.data.fund,
       onTick: (tick) => {
         this.load(true);
-        // 分时点数多，每 6 个 tick（60s）刷一次
-        if (tick % 6 === 0) this.loadTrend();
+        if (tick % 6 === 0) this.loadTrend(); // 分时每 60s 刷一次
       }
     });
-    // 顺序化：先 load（会预热 info/holdings 缓存），完成后再拉 trend，
-    // 复用同一已热实例，避免双实例冷启动 + 缓存 miss
+    // 先 load 预热缓存，再拉 trend，复用同一实例避免冷启动
     this.load(true).then(() => this.loadTrend());
   },
 
   onShow() {
-    // 从首页返回时自选状态可能已变，同步一下
+    // 从首页返回时同步自选状态
     const code = this.data.code;
     if (code) {
       this.setData({ inWatchlist: util.getCodes().indexOf(code) >= 0 });
@@ -71,7 +72,7 @@ Page({
           return;
         }
         const rows = (f.stocks || []).map((s) => {
-          // 较上期：新增 / 变动百分点（红↑绿↓）
+          // 较上期：新增 / 变动百分点
           let deltaText = '';
           let deltaArrow = '';
           let deltaCls = 'flat';
@@ -110,7 +111,7 @@ Page({
         const isPolling = !!this._fullLoaded;
 
         if (isPolling) {
-          // 轮询路径：只更新会变的字段，名称/类型/规模/净值不动
+          // 轮询：只更新会变的字段，名称/类型/规模不动
           const patch = {};
           const oldFund = this.data.fund || {};
           if (f.holdingsPeriod && f.holdingsPeriod !== oldFund.periodText) {
@@ -126,7 +127,6 @@ Page({
             patch['fund.lastDayDate'] = util.fmtDate(f.lastDayDate);
           }
           if (f.msg !== oldFund.msg) patch['fund.msg'] = f.msg;
-          // 涨幅用云函数 estPct（和首页同源）
           const estPctText = util.fmtPct(f.estPct);
           const estCls = util.clsOf(f.estPct);
           if (estPctText !== oldFund.pctText) patch['fund.pctText'] = estPctText;
@@ -134,7 +134,7 @@ Page({
           patch['fund.hasPct'] = f.estPct !== null && f.estPct !== undefined;
           patch['lastTime'] = util.nowText();
 
-          // rows 增量：只更新会变的字段（涨跌幅）
+          // rows 增量：只更新涨跌幅
           const oldRows = this.data.rows || [];
           for (let i = 0; i < rows.length; i++) {
             if (!oldRows[i]) break;
@@ -166,6 +166,9 @@ Page({
               benchText: f.source === 'index' && f.bench && f.bench.name
                 ? '跟踪 ' + f.bench.name
                 : '',
+              benchDesc: f.source === 'index' && f.bench && f.bench.desc
+                ? f.bench.desc
+                : '',
               periodText: f.holdingsPeriod || '未披露',
               lastDayPctText: util.fmtPct(f.lastDayPct),
               lastDayCls: util.clsOf(f.lastDayPct),
@@ -179,8 +182,6 @@ Page({
           });
           this._fullLoaded = true;
         }
-
-        this.applyTrendPct();
       })
       .catch((err) => {
         this.setData({ loading: false });
@@ -191,7 +192,7 @@ Page({
       });
   },
 
-  /** ---------- 当日分时走势 ---------- */
+  /** 当日分时走势 */
 
   loadTrend() {
     const code = this.data.code;
@@ -204,27 +205,20 @@ Page({
         this._trendData = t;
 
         if (!isCurrent) {
-          this.setData({ trend: null, trendLoaded: true, touchIdx: -1, touchTip: '' });
+          this.setData({ trend: null, trendLoaded: true, touchIdx: -1, touchTime: '', touchPct: '', touchCls: '' });
         } else {
-          // 关键：drawChart 必须在 setData 渲染完成后调用，
-          // 否则 wx:if 包裹的 canvas 节点尚未建好，selectorQuery 拿不到
-          this.setData({ trend: t, trendLoaded: true, touchIdx: -1, touchTip: '' }, () => {
+          // 日期 YYYYMMDD → MM-DD
+          const d = String(t.date || '').replace(/\D/g, '').slice(0, 8);
+          const trendDateText = d.length === 8 ? d.slice(4, 6) + '-' + d.slice(6, 8) : '';
+          const benchDesc = t.benchDesc || this.data.fund.benchDesc || '';
+          this.setData({ trend: t, trendDateText: trendDateText, 'fund.benchDesc': benchDesc, trendLoaded: true, touchIdx: -1, touchTime: '', touchPct: '', touchCls: '' }, () => {
             this.drawChart(-1);
           });
         }
-        this.applyTrendPct();
       })
       .catch(() => {
         this.setData({ trend: null, trendLoaded: true });
       });
-  },
-
-  applyTrendPct() {
-    // 涨幅统一用云函数 estimate 返回的 estPct（和首页同源），
-    // 分时图只用于绘制曲线，不再覆盖涨幅值，避免两边不一致
-    const fund = this.data.fund;
-    if (!fund) return;
-    // fund.pctText 已在 load() 中由 f.estPct 设置，这里不再覆盖
   },
 
   isCurrentData(date) {
@@ -250,20 +244,21 @@ Page({
     const W = this._chartW || 1;
     const chartW = W - padX - 8;
     const ratio = Math.min(1, Math.max(0, (touch.x - padX) / chartW));
-    // x 轴按点索引均布（与 chart.js 绘制一致），直接按比例取索引
     const idx = Math.round(ratio * (pts.length - 1));
     const p = pts[idx];
     if (this.data.touchIdx === idx) return;
     this.setData({
       touchIdx: idx,
-      touchTip: p.t + '  ' + (p.pct >= 0 ? '+' : '') + p.pct.toFixed(2) + '%'
+      touchTime: p.t,
+      touchPct: (p.pct >= 0 ? '+' : '') + p.pct.toFixed(2) + '%',
+      touchCls: util.clsOf(p.pct)
     });
     this.drawChart(idx);
   },
 
   onTouchEnd() {
     if (this.data.touchIdx < 0) return;
-    this.setData({ touchIdx: -1, touchTip: '' });
+    this.setData({ touchIdx: -1, touchTime: '', touchPct: '', touchCls: '' });
     this.drawChart(-1);
   },
 
@@ -271,7 +266,6 @@ Page({
     const trend = this.data.trend;
     if (!trend || !trend.points || trend.points.length < 2) return;
     const size = { width: this._chartW, height: this._chartH };
-    // 命中缓存：同步绘制；未命中：首次 query 后缓存
     if (this._canvas && this._chartW && this._chartH) {
       chart.drawTrend(this._canvas, size, trend, selIdx);
     } else {
@@ -282,7 +276,7 @@ Page({
         .exec((res) => {
           const item = res && res[0];
           if (!item || !item.node) {
-            // 节点尚未就绪（常见于首绘），延一帧再试，避免静默丢帧
+            // 节点未就绪（首绘常见），延一帧重试
             if (this._drawRetry < 3) {
               this._drawRetry = (this._drawRetry || 0) + 1;
               setTimeout(() => this.drawChart(selIdx), 30);
@@ -298,7 +292,7 @@ Page({
     }
   },
 
-  /** 自选切换：添加 / 移出 */
+  /** 自选切换 */
   toggleWatch() {
     const code = this.data.code;
     if (this.data.inWatchlist) {

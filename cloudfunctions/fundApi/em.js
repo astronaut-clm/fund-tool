@@ -1,13 +1,9 @@
-/**
- * 数据源封装：天天基金（基金类数据）+ 腾讯/新浪（股票行情）
- * 均为公开免费接口，仅供个人学习研究使用
- */
+/** 数据源：天天基金（基金数据）+ 腾讯/新浪（行情），公开免费接口 */
 const https = require('https');
 
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
-// 复用 TCP/TLS 连接，避免每次握手（详情页每分钟 ~10 次分时请求）
 const agent = new https.Agent({
   keepAlive: true,
   keepAliveMsecs: 30000,
@@ -15,14 +11,19 @@ const agent = new https.Agent({
   maxFreeSockets: 8
 });
 
-// 基金代码白名单（6 位数字），防止入参被任意拼进 URL
 const RE_FUND_CODE = /^\d{6}$/;
-
 function isValidFundCode(code) {
   return RE_FUND_CODE.test(String(code || ''));
 }
 
-/** GET 请求，自动跟随一次重定向；ms 可覆盖单请求超时（云函数整体 20s，务必留余量） */
+const BATCH = 50;
+function chunk(arr, n) {
+  const out = [];
+  for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n));
+  return out;
+}
+
+/** GET 请求，自动跟随一次重定向 */
 function req(url, referer, redirect, ms) {
   return new Promise(function (resolve, reject) {
     const doReq = function (u) {
@@ -93,10 +94,9 @@ function toSecid(code) {
   return '0.' + c; // 深市 / 北交所
 }
 
-/** 基金类目关键词：过滤联想接口混入的股票（深市/沪市）、指数、板块等非基金结果 */
+/** 过滤联想接口混入的股票/指数/板块等非基金结果 */
 const FUND_TYPE_RE = /型|QDII|FOF|ETF|LOF|REITs|理财/i;
 
-/** 基金搜索联想 */
 async function searchFund(key) {
   const k = String(key || '').trim();
   const url =
@@ -120,13 +120,10 @@ async function searchFund(key) {
       };
     })
     .filter(function (it) {
-      // 基金类目含"混合型/股票型/债券型/指数型/QDII/FOF/ETF…"；
-      // 股票（深市/沪市）、指数（指数）、板块等不含这些关键词，一律过滤
       return FUND_TYPE_RE.test(it.type);
     });
 
-  // 输入是 6 位纯数字（基金代码）时，精确查该基金并置顶
-  // 联想接口对代码片段匹配不准（如搜"900"返回一堆 00/01 开头），这里兜底
+  // 6 位数字（基金代码）时精确查并置顶（联想接口对代码片段匹配不准）
   if (/^\d{6}$/.test(k)) {
     try {
       const info = await getFundInfo(k);
@@ -137,11 +134,11 @@ async function searchFund(key) {
         items.unshift(exact);
       }
     } catch (e) {
-      /* 忽略，按联想结果返回 */
+      /* 忽略 */
     }
   }
 
-  // 本地重排序：代码匹配优先，名称匹配其次
+  // 重排序：代码匹配优先，名称匹配其次
   const score = function (it) {
     if (it.code === k) return 0;
     if (it.code.indexOf(k) === 0) return 1;
@@ -157,11 +154,7 @@ async function searchFund(key) {
   return items.slice(0, 20);
 }
 
-/**
- * 基金不变信息（名称、类型、规模）
- * 注：单位净值与净值日期不再从此接口取（24h 缓存会滞后），
- *     统一由 getLastDayChange 的 lsjz 接口提供
- */
+/** 基金基本信息（名称、类型、规模） */
 async function getFundInfo(fcode) {
   if (!isValidFundCode(fcode)) return null;
   const url =
@@ -179,10 +172,7 @@ async function getFundInfo(fcode) {
   };
 }
 
-/**
- * 上一交易日涨跌幅 + 当日单位净值：取最新已披露一期
- * @returns {{date:string, pct:number, nav:number|null}|null}
- */
+/** 上一交易日涨跌幅 + 当日单位净值（取最新已披露一期） */
 async function getLastDayChange(fcode) {
   if (!isValidFundCode(fcode)) return null;
   const url =
@@ -206,10 +196,7 @@ async function getLastDayChange(fcode) {
   return null;
 }
 
-/**
- * 解析 jjcc 接口返回的持仓表格（可能包含多个报告期）
- * @returns {{period:string, stocks:Array}[]} 按报告期倒序
- */
+/** 解析 jjcc 持仓表格（可能含多个报告期），返回按报告期倒序 */
 function parseJjcc(html) {
   const segs = String(html).split(/<h4[^>]*>/i).slice(1);
   const out = [];
@@ -287,25 +274,20 @@ async function getHoldingsByYear(code, year) {
   return parseJjcc(html);
 }
 
-/**
- * 前十大持仓（季报快照，非实时！）+ 较上期持仓变动
- * 注意：必须带 Referer，否则返回空
- * 每只股票附加：weightDelta（较上期变动，百分点）或 isNew（上期未持有）
- */
+/** 前十大持仓（季报快照）+ 较上期持仓变动（weightDelta 百分点 / isNew） */
 async function getHoldings(code) {
   if (!isValidFundCode(code)) return null;
   const periods = await getHoldingsByYear(code, '');
   if (!periods.length) return null;
   const cur = periods[0];
 
-  // year 为空时通常只返回最新一期；再拉同年报告期找上一期
   let list = periods;
   if (periods.length < 2) {
     try {
       const sameYear = await getHoldingsByYear(code, cur.period.slice(0, 4));
       if (sameYear.length > list.length) list = sameYear;
     } catch (e) {
-      /* 较上期降级为 -- */
+      /* 降级 */
     }
   }
 
@@ -313,12 +295,12 @@ async function getHoldings(code) {
   const idx = list.findIndex(function (p) { return p.period === cur.period; });
   if (idx >= 0 && idx + 1 < list.length) prev = list[idx + 1];
   if (!prev) {
-    // 最新一期是 Q1 报告时，上一期为上一年年报
+    // 最新一期是 Q1 时，上一期为上一年年报
     try {
       const older = await getHoldingsByYear(code, String(Number(cur.period.slice(0, 4)) - 1));
       if (older.length) prev = older[0];
     } catch (e) {
-      /* 较上期降级为 -- */
+      /* 降级 */
     }
   }
 
@@ -330,7 +312,7 @@ async function getHoldings(code) {
   }
   cur.stocks.forEach(function (s) {
     if (prevMap[s.code] !== undefined) {
-      s.weightDelta = Math.round((s.weight - prevMap[s.code]) * 10000) / 100; // 百分点
+      s.weightDelta = Math.round((s.weight - prevMap[s.code]) * 10000) / 100;
     } else {
       s.isNew = true;
     }
@@ -339,10 +321,7 @@ async function getHoldings(code) {
   return { period: cur.period, prevPeriod: prev ? prev.period : '', stocks: cur.stocks };
 }
 
-/**
- * 个股所属行业（东财 push2 批量，f100=行业）
- * 注：push2 对云 IP 偶发限流，失败返回空 map，前端不展示行业即可
- */
+/** 个股所属行业（push2 批量，对云 IP 偶发限流，失败返回空 map） */
 async function getIndustries(codes) {
   if (!codes || !codes.length) return {};
   const url =
@@ -364,12 +343,7 @@ async function getIndustries(codes) {
   }
 }
 
-/**
- * 行情：腾讯 qt.gtimg.cn（主）+ 新浪 hq.sinajs.cn（兜底）
- * 天天基金 push2 行情接口对云 IP 限流（ECONNRESET），故改用这两个免费接口
- */
-
-/** 东财 secid → 腾讯/新浪代码（"1.600519"→sh600519，"0.000858"→sz000858，"116.00700"→hk00700） */
+/** 东财 secid → 腾讯/新浪代码（"1.600519"→sh600519） */
 function toTxCode(secid) {
   const s = String(secid || '');
   const dot = s.indexOf('.');
@@ -382,7 +356,7 @@ function toTxCode(secid) {
   return null;
 }
 
-/** 解析腾讯返回（`~` 分隔），key=腾讯代码 */
+/** 解析腾讯行情（`~` 分隔） */
 function parseTencent(text) {
   const map = {};
   String(text || '').split(';').forEach(function (line) {
@@ -393,14 +367,13 @@ function parseTencent(text) {
     const price = Number(f[3]);
     const prevClose = Number(f[4]);
     if (!Number.isFinite(price) || price <= 0 || !Number.isFinite(prevClose)) return;
-    // f[30] 为行情时间 "YYYYMMDDHHMMSS"，取日期部分 YYYYMMDD
     const date = String(f[30] || '').slice(0, 8);
     map[m[1]] = { price: price, prevClose: prevClose, pct: Number(f[32]) || 0, date: date };
   });
   return map;
 }
 
-/** 解析新浪返回（逗号分隔），key=新浪代码 */
+/** 解析新浪行情（逗号分隔） */
 function parseSina(text) {
   const map = {};
   String(text || '').split(';').forEach(function (line) {
@@ -410,7 +383,6 @@ function parseSina(text) {
     const price = Number(f[3]);
     const prevClose = Number(f[2]);
     if (!Number.isFinite(price) || price <= 0 || !Number.isFinite(prevClose) || prevClose <= 0) return;
-    // f[30] 为日期 "YYYY-MM-DD"，取数字部分 YYYYMMDD
     const date = String(f[30] || '').replace(/\D/g, '').slice(0, 8);
     map[m[1]] = {
       price: price,
@@ -422,7 +394,6 @@ function parseSina(text) {
   return map;
 }
 
-/** 按数据源拉取行情（批量），返回 key=腾讯/新浪代码 的 map */
 async function fetchBySource(source, codes) {
   if (source === 'tencent') {
     const t = await req('https://qt.gtimg.cn/q=' + codes.join(','), 'https://gu.qq.com/', false, 4000);
@@ -432,18 +403,13 @@ async function fetchBySource(source, codes) {
   return parseSina(t);
 }
 
-/**
- * 批量行情：腾讯主、新浪兜底，最终按 secid + 纯 code 双索引返回
- * - 分片：每批 50 个代码（避免单 URL 过长被网关拒绝）
- * - 兜底只补缺失：第一源缺失的代码再交给第二源，不重复拉取已成功的
- */
+/** 批量行情：腾讯主、新浪兜底，按 secid + 纯 code 双索引返回 */
 async function getQuotes(secids) {
   if (!secids || !secids.length) return {};
 
   const codes = secids.map(toTxCode).filter(Boolean);
   if (!codes.length) return {};
 
-  // secid -> txCode 映射，便于回填
   const secidToTx = {};
   secids.forEach(function (secid) {
     const tx = toTxCode(secid);
@@ -451,16 +417,7 @@ async function getQuotes(secids) {
   });
 
   const result = {};
-  const BATCH = 50;
 
-  // 分片：每批 50 个代码
-  function chunk(arr, n) {
-    const out = [];
-    for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n));
-    return out;
-  }
-
-  // 第一源：腾讯，按分片并发
   const txBatches = chunk(codes, BATCH);
   await Promise.all(
     txBatches.map(async function (batch) {
@@ -470,12 +427,12 @@ async function getQuotes(secids) {
           if (parsed[c]) result[c] = parsed[c];
         });
       } catch (e) {
-        /* 该批走兜底 */
+        /* 走兜底 */
       }
     })
   );
 
-  // 第二源：新浪，只补缺失
+  // 新浪只补腾讯缺失的
   const missing = codes.filter(function (c) { return !result[c]; });
   if (missing.length) {
     const sinaBatches = chunk(missing, BATCH);
@@ -504,20 +461,19 @@ async function getQuotes(secids) {
   return map;
 }
 
-/** 个股当日分时（分钟级，腾讯） */
+/** 个股分时（腾讯，入参 secid） */
 async function getTrend(secid) {
   const tx = toTxCode(secid);
   if (!tx) return null;
   return fetchTrendByTx(tx);
 }
 
-/** 指数当日分时（分钟级，腾讯）—— 入参直接是腾讯代码（sh000300/hkHSTECH） */
+/** 指数分时（腾讯，入参直接是腾讯代码 sh000300/hkHSTECH） */
 async function getIndexTrend(txCode) {
   if (!txCode) return null;
   return fetchTrendByTx(txCode);
 }
 
-/** 腾讯分时接口共用实现 */
 async function fetchTrendByTx(tx) {
   try {
     const t = await req('https://web.ifzq.gtimg.cn/appstock/app/minute/query?code=' + tx, 'https://gu.qq.com/', false, 5000);
@@ -531,12 +487,10 @@ async function fetchTrendByTx(tx) {
     const points = [];
     node.data.data.forEach(function (line) {
       const p = String(line).split(' ');
-      const raw = p[0]; // "0930" / "1500"
+      const raw = p[0];
       const price = Number(p[1]);
       if (p.length < 2 || !Number.isFinite(price) || price <= 0) return;
-      // 过滤 17:00 之后的盘后孤立点；
-      // 16:00-17:00 区间的收盘竞价/定价快照点（如港股 1608）保留
-      if (raw > '1700') return;
+      if (raw > '1700') return; // 过滤盘后孤立点，保留 16:00-17:00 收盘竞价快照
       points.push({
         t: raw.slice(0, 2) + ':' + raw.slice(2),
         price: price,
@@ -544,9 +498,9 @@ async function fetchTrendByTx(tx) {
       });
     });
     if (points.length < 2) return null;
-    // 分时数据所属日期（YYYYMMDD），用于判断是否为当天数据
     const date = String((node.data.date || '') + '');
-    return { date: date, preClose: preClose, points: points };
+    const introduce = String(node.introduce || ''); // A 股指数有介绍，港股/美股指数无
+    return { date: date, preClose: preClose, points: points, introduce: introduce };
   } catch (e) {
     return null;
   }
@@ -554,44 +508,27 @@ async function fetchTrendByTx(tx) {
 
 /**
  * 指数基金跟踪标的
- * 数据源：蛋卷基金 danjuanfunds.com
- *   - djapi/fund/{code} → performance_bench_mark 文本（含真实跟踪指数名）
- *   - djapi/index_eva/dj → 63 条「指数名 ↔ index_code」词典（含 HKHSTECH/SP500/NDX 等）
- * 方案：解析 performance_bench_mark 提取指数名 → 词典查 index_code → 转 txCode
- *   （benchmark_index[0] 是通用对比列表，恒为沪深300，不可用）
- * 返回 {symbol, name, txCode}
- *   symbol  形如 "SH000300" / "HKHSTECH" / "SP500"（蛋卷 index_code）
- *   name    形如 "沪深300" / "恒生科技"
- *   txCode  形如 "sh000300" / "hkHSTECH" / "spx"（直接喂腾讯 qt.gtimg.cn）
- *   txCode 为空：腾讯无此指数行情（如 CSI930950 中证偏股基金指数），降级走持仓加权
- * 兜底：蛋卷异常/解析失败返回 null，estimateOne 自然回退到持仓加权逻辑
+ * 蛋卷 performance_bench_mark 文本 → 提取指数名 → 词典查 index_code → 转 txCode
+ * benchmark_index[0] 是通用对比列表（恒为沪深300），不可用
+ * 返回 {symbol, name, txCode}，txCode 为空则腾讯无此指数行情
  */
-
-/** 蛋卷 index_code → 腾讯代码 */
 function indexSymbolToTx(symbol) {
   const s = String(symbol || '').trim();
   if (!s) return '';
-  // A 股：SH/SZ 前缀 + 6 位数字
   let m = s.match(/^(SH|SZ)(\d{6})$/);
   if (m) return m[1].toLowerCase() + m[2];
-  // 港股：HK 开头（HKHSI/HKHSTECH/HKHSCEI/HKHSSCNE/HSFML25/SPHCMSHP）
   if (/^HK/.test(s)) return 'hk' + s.slice(2);
-  // 美股：SP500/NDX/GDAXI/CSPSADRP/SPACEVCP/SPCQVCP/SPHCMSHP
   if (s === 'SP500') return 'spx';
   if (s === 'NDX') return 'ndx';
   if (s === 'GDAXI') return 'dax';
-  // 其他美股代码（CSPSADRP 等）腾讯代码不统一，跳过
-  // 中证主题指数 CSI930950/CSI931079 等：腾讯无行情，跳过
-  // 印度 935600：腾讯无行情，跳过
-  return '';
+  return ''; // CSI*/935600 等腾讯无行情
 }
 
-/** 进程内词典缓存（index_eva/dj 63 条，TTL 7 天） */
 let _indexDict = null;
 let _indexDictTs = 0;
 const INDEX_DICT_TTL = 7 * 24 * 60 * 60 * 1000;
 
-/** 拉取蛋卷指数词典：name → index_code，如 "恒生科技" → "HKHSTECH" */
+/** 蛋卷指数词典：name → index_code（"恒生科技" → "HKHSTECH"），缓存 7 天 */
 async function fetchIndexDict() {
   if (_indexDict && Date.now() - _indexDictTs < INDEX_DICT_TTL) return _indexDict;
   try {
@@ -613,19 +550,11 @@ async function fetchIndexDict() {
   }
 }
 
-/**
- * 从 performance_bench_mark 文本提取跟踪指数名
- *   典型文本："恒生科技指数收益率（使用估值汇率折算）×95%+活期存款利率（税后）×5%"
- *            "沪深300指数收益率×95%＋银行活期存款利率（税后）×5%"
- *            "中证白酒指数收益率×95%＋..."
- *   规则：取第一个"指数收益率"前的文本，去掉"收益率"后缀
- */
+/** 从 performance_bench_mark 提取指数名（如"恒生科技指数收益率×95%+..."→"恒生科技指数"） */
 function extractIndexName(benchText) {
   const t = String(benchText || '');
-  // 匹配"XXX指数收益率"中的 XXX部分（含"指数"二字）
   const m = t.match(/([\u4e00-\u9fa5A-Za-z0-9·]+指数)收益率/);
   if (m) return m[1];
-  // 兜底：取"×"或"+"前的文本
   const m2 = t.match(/([^×+＋\-－]+?)(?:收益率|×|＋|\+)/);
   if (m2) return m2[1].trim();
   return '';
@@ -641,21 +570,17 @@ async function getBenchmarkIndex(fcode) {
     const data = json && json.data;
     if (!data) return null;
 
-    // 1. 从 performance_bench_mark 提取指数名
     const indexName = extractIndexName(data.performance_bench_mark);
     if (!indexName) return null;
 
-    // 2. 词典映射 name → index_code
-    //    提取名带"指数"后缀（如"恒生科技指数"），词典 key 不带后缀（"恒生科技"），
-    //    故先精确查，再查去掉"指数"后缀的变体
+    // 词典 key 不带"指数"后缀，提取名带后缀，故先精确查再去后缀查
     const dict = await fetchIndexDict();
     let symbol = dict[indexName] || '';
     if (!symbol && /指数$/.test(indexName)) {
-      const stripped = indexName.slice(0, -2); // 去掉"指数"二字
-      symbol = dict[stripped] || '';
+      symbol = dict[indexName.slice(0, -2)] || '';
     }
 
-    // 3. 词典未命中：若是 A 股宽基（沪深300/中证500/创业板等），benchmark_index 里能查到
+    // A 股宽基兜底：从 benchmark_index 通用列表里按 symbol_name 匹配
     if (!symbol && Array.isArray(data.benchmark_index)) {
       const hit = data.benchmark_index.find(function (it) {
         if (!it) return false;
@@ -667,26 +592,16 @@ async function getBenchmarkIndex(fcode) {
 
     if (!symbol) return null;
     const txCode = indexSymbolToTx(symbol);
-    return { symbol: symbol, name: indexName, txCode: txCode };
+    return { symbol: symbol, name: indexName, txCode: txCode, desc: String(data.invest_orientation || '') };
   } catch (e) {
-    console.warn('[getBenchmarkIndex] failed', fcode, (e && e.message) || e, 'len=' + String(raw).length);
+    console.warn('[getBenchmarkIndex] failed', fcode, (e && e.message) || e);
     return null;
   }
 }
 
-/**
- * 批量指数行情：直接按腾讯代码（sh000300 / sz399997）拉取
- * 与 getQuotes 区别：getQuotes 入参是东财 secid（需 toTxCode 转换），
- * 指数代码无对应 secid，故单独走这条路径
- */
+/** 批量指数行情（入参直接是腾讯代码，无 secid） */
 async function getIndexQuotes(txCodes) {
   if (!txCodes || !txCodes.length) return {};
-  const BATCH = 50;
-  function chunk(arr, n) {
-    const out = [];
-    for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n));
-    return out;
-  }
   const result = {};
   await Promise.all(
     chunk(txCodes, BATCH).map(async function (batch) {
@@ -697,7 +612,7 @@ async function getIndexQuotes(txCodes) {
           if (parsed[c]) result[c] = parsed[c];
         });
       } catch (e) {
-        /* 该批放弃 */
+        /* 放弃该批 */
       }
     })
   );
@@ -705,9 +620,7 @@ async function getIndexQuotes(txCodes) {
 }
 
 module.exports = {
-  req: req,
-  toSecid: toSecid,
-  indexSymbolToTx: indexSymbolToTx,
+  isValidFundCode: isValidFundCode,
   getTrend: getTrend,
   getIndexTrend: getIndexTrend,
   searchFund: searchFund,

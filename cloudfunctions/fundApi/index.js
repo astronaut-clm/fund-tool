@@ -1,9 +1,6 @@
 const em = require('./em');
 const estimate = require('./estimate');
 
-// 基金代码白名单：6 位纯数字
-const RE_FUND_CODE = /^\d{6}$/;
-
 function ok(data) {
   return { ok: true, data: data };
 }
@@ -19,7 +16,7 @@ function normalizeCodes(input) {
   const out = [];
   for (let i = 0; i < input.length && out.length < 20; i++) {
     const c = String(input[i] || '').trim();
-    if (RE_FUND_CODE.test(c) && !seen[c]) {
+    if (em.isValidFundCode(c) && !seen[c]) {
       seen[c] = true;
       out.push(c);
     }
@@ -50,7 +47,7 @@ exports.main = async (event) => {
 
     if (action === 'trend') {
       const code = String(event.code || '').trim();
-      if (!RE_FUND_CODE.test(code)) return ok(null);
+      if (!em.isValidFundCode(code)) return ok(null);
       const t = await estimate.estimateTrend(code);
       console.log('[fundApi] trend', code, 'cost', Date.now() - start, 'ms');
       return ok(t);
