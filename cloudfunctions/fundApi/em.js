@@ -508,7 +508,17 @@ async function getQuotes(secids) {
 async function getTrend(secid) {
   const tx = toTxCode(secid);
   if (!tx) return null;
+  return fetchTrendByTx(tx);
+}
 
+/** 指数当日分时（分钟级，腾讯）—— 入参直接是腾讯代码（sh000300/hkHSTECH） */
+async function getIndexTrend(txCode) {
+  if (!txCode) return null;
+  return fetchTrendByTx(txCode);
+}
+
+/** 腾讯分时接口共用实现 */
+async function fetchTrendByTx(tx) {
   try {
     const t = await req('https://web.ifzq.gtimg.cn/appstock/app/minute/query?code=' + tx, 'https://gu.qq.com/', false, 5000);
     const node = (JSON.parse(t).data || {})[tx];
@@ -524,8 +534,9 @@ async function getTrend(secid) {
       const raw = p[0]; // "0930" / "1500"
       const price = Number(p[1]);
       if (p.length < 2 || !Number.isFinite(price) || price <= 0) return;
-      // 过滤掉 15:00 之后的尾盘集合竞价点，避免曲线尾部出现孤立断点
-      if (raw > '1500') return;
+      // 过滤 17:00 之后的盘后孤立点；
+      // 16:00-17:00 区间的收盘竞价/定价快照点（如港股 1608）保留
+      if (raw > '1700') return;
       points.push({
         t: raw.slice(0, 2) + ':' + raw.slice(2),
         price: price,
@@ -541,12 +552,168 @@ async function getTrend(secid) {
   }
 }
 
+/**
+ * 指数基金跟踪标的
+ * 数据源：蛋卷基金 danjuanfunds.com
+ *   - djapi/fund/{code} → performance_bench_mark 文本（含真实跟踪指数名）
+ *   - djapi/index_eva/dj → 63 条「指数名 ↔ index_code」词典（含 HKHSTECH/SP500/NDX 等）
+ * 方案：解析 performance_bench_mark 提取指数名 → 词典查 index_code → 转 txCode
+ *   （benchmark_index[0] 是通用对比列表，恒为沪深300，不可用）
+ * 返回 {symbol, name, txCode}
+ *   symbol  形如 "SH000300" / "HKHSTECH" / "SP500"（蛋卷 index_code）
+ *   name    形如 "沪深300" / "恒生科技"
+ *   txCode  形如 "sh000300" / "hkHSTECH" / "spx"（直接喂腾讯 qt.gtimg.cn）
+ *   txCode 为空：腾讯无此指数行情（如 CSI930950 中证偏股基金指数），降级走持仓加权
+ * 兜底：蛋卷异常/解析失败返回 null，estimateOne 自然回退到持仓加权逻辑
+ */
+
+/** 蛋卷 index_code → 腾讯代码 */
+function indexSymbolToTx(symbol) {
+  const s = String(symbol || '').trim();
+  if (!s) return '';
+  // A 股：SH/SZ 前缀 + 6 位数字
+  let m = s.match(/^(SH|SZ)(\d{6})$/);
+  if (m) return m[1].toLowerCase() + m[2];
+  // 港股：HK 开头（HKHSI/HKHSTECH/HKHSCEI/HKHSSCNE/HSFML25/SPHCMSHP）
+  if (/^HK/.test(s)) return 'hk' + s.slice(2);
+  // 美股：SP500/NDX/GDAXI/CSPSADRP/SPACEVCP/SPCQVCP/SPHCMSHP
+  if (s === 'SP500') return 'spx';
+  if (s === 'NDX') return 'ndx';
+  if (s === 'GDAXI') return 'dax';
+  // 其他美股代码（CSPSADRP 等）腾讯代码不统一，跳过
+  // 中证主题指数 CSI930950/CSI931079 等：腾讯无行情，跳过
+  // 印度 935600：腾讯无行情，跳过
+  return '';
+}
+
+/** 进程内词典缓存（index_eva/dj 63 条，TTL 7 天） */
+let _indexDict = null;
+let _indexDictTs = 0;
+const INDEX_DICT_TTL = 7 * 24 * 60 * 60 * 1000;
+
+/** 拉取蛋卷指数词典：name → index_code，如 "恒生科技" → "HKHSTECH" */
+async function fetchIndexDict() {
+  if (_indexDict && Date.now() - _indexDictTs < INDEX_DICT_TTL) return _indexDict;
+  try {
+    const text = await req('https://danjuanfunds.com/djapi/index_eva/dj', 'https://danjuanfunds.com/', false, 5000);
+    const json = JSON.parse(text);
+    const items = (json && json.data && json.data.items) || [];
+    const dict = {};
+    items.forEach(function (it) {
+      if (it && it.name && it.index_code) {
+        dict[String(it.name).trim()] = String(it.index_code).trim();
+      }
+    });
+    _indexDict = dict;
+    _indexDictTs = Date.now();
+    return dict;
+  } catch (e) {
+    console.warn('[fetchIndexDict] failed', (e && e.message) || e);
+    return _indexDict || {};
+  }
+}
+
+/**
+ * 从 performance_bench_mark 文本提取跟踪指数名
+ *   典型文本："恒生科技指数收益率（使用估值汇率折算）×95%+活期存款利率（税后）×5%"
+ *            "沪深300指数收益率×95%＋银行活期存款利率（税后）×5%"
+ *            "中证白酒指数收益率×95%＋..."
+ *   规则：取第一个"指数收益率"前的文本，去掉"收益率"后缀
+ */
+function extractIndexName(benchText) {
+  const t = String(benchText || '');
+  // 匹配"XXX指数收益率"中的 XXX部分（含"指数"二字）
+  const m = t.match(/([\u4e00-\u9fa5A-Za-z0-9·]+指数)收益率/);
+  if (m) return m[1];
+  // 兜底：取"×"或"+"前的文本
+  const m2 = t.match(/([^×+＋\-－]+?)(?:收益率|×|＋|\+)/);
+  if (m2) return m2[1].trim();
+  return '';
+}
+
+async function getBenchmarkIndex(fcode) {
+  if (!isValidFundCode(fcode)) return null;
+  const url = 'https://danjuanfunds.com/djapi/fund/' + fcode;
+  let raw = '';
+  try {
+    raw = await req(url, 'https://danjuanfunds.com/', false, 6000);
+    const json = JSON.parse(raw);
+    const data = json && json.data;
+    if (!data) return null;
+
+    // 1. 从 performance_bench_mark 提取指数名
+    const indexName = extractIndexName(data.performance_bench_mark);
+    if (!indexName) return null;
+
+    // 2. 词典映射 name → index_code
+    //    提取名带"指数"后缀（如"恒生科技指数"），词典 key 不带后缀（"恒生科技"），
+    //    故先精确查，再查去掉"指数"后缀的变体
+    const dict = await fetchIndexDict();
+    let symbol = dict[indexName] || '';
+    if (!symbol && /指数$/.test(indexName)) {
+      const stripped = indexName.slice(0, -2); // 去掉"指数"二字
+      symbol = dict[stripped] || '';
+    }
+
+    // 3. 词典未命中：若是 A 股宽基（沪深300/中证500/创业板等），benchmark_index 里能查到
+    if (!symbol && Array.isArray(data.benchmark_index)) {
+      const hit = data.benchmark_index.find(function (it) {
+        if (!it) return false;
+        const sn = String(it.symbol_name || '');
+        return sn === indexName || (sn === indexName.replace(/指数$/, ''));
+      });
+      if (hit) symbol = String(hit.symbol || '');
+    }
+
+    if (!symbol) return null;
+    const txCode = indexSymbolToTx(symbol);
+    return { symbol: symbol, name: indexName, txCode: txCode };
+  } catch (e) {
+    console.warn('[getBenchmarkIndex] failed', fcode, (e && e.message) || e, 'len=' + String(raw).length);
+    return null;
+  }
+}
+
+/**
+ * 批量指数行情：直接按腾讯代码（sh000300 / sz399997）拉取
+ * 与 getQuotes 区别：getQuotes 入参是东财 secid（需 toTxCode 转换），
+ * 指数代码无对应 secid，故单独走这条路径
+ */
+async function getIndexQuotes(txCodes) {
+  if (!txCodes || !txCodes.length) return {};
+  const BATCH = 50;
+  function chunk(arr, n) {
+    const out = [];
+    for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n));
+    return out;
+  }
+  const result = {};
+  await Promise.all(
+    chunk(txCodes, BATCH).map(async function (batch) {
+      try {
+        const t = await req('https://qt.gtimg.cn/q=' + batch.join(','), 'https://gu.qq.com/', false, 4000);
+        const parsed = parseTencent(t);
+        batch.forEach(function (c) {
+          if (parsed[c]) result[c] = parsed[c];
+        });
+      } catch (e) {
+        /* 该批放弃 */
+      }
+    })
+  );
+  return result;
+}
+
 module.exports = {
   req: req,
   toSecid: toSecid,
+  indexSymbolToTx: indexSymbolToTx,
   getTrend: getTrend,
+  getIndexTrend: getIndexTrend,
   searchFund: searchFund,
   getFundInfo: getFundInfo,
+  getBenchmarkIndex: getBenchmarkIndex,
+  getIndexQuotes: getIndexQuotes,
   getLastDayChange: getLastDayChange,
   getHoldings: getHoldings,
   getIndustries: getIndustries,

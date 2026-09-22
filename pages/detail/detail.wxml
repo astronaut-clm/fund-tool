@@ -16,6 +16,7 @@
       <text class="info-item code">{{fund.code}}</text>
       <text wx:if="{{fund.ftypeText}}" class="info-item">{{fund.ftypeText}}</text>
       <text wx:if="{{fund.sizeText}}" class="info-item">{{fund.sizeText}}</text>
+      <text wx:if="{{fund.benchText}}" class="info-item bench">{{fund.benchText}}</text>
     </view>
 
     <view class="hero-main">

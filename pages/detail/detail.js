@@ -160,7 +160,12 @@ Page({
               pctText: util.fmtPct(f.estPct),
               cls: util.clsOf(f.estPct),
               isBond: /债|纯债|信用|利率/.test(String(f.ftype || '')),
-              coverageText: f.coverage ? '总占比 ' + f.coverage + '%' : '',
+              coverageText: f.source === 'index'
+                ? (f.bench && f.bench.name ? '跟踪指数 ' + f.bench.name : '跟踪指数')
+                : (f.coverage ? '总占比 ' + f.coverage + '%' : ''),
+              benchText: f.source === 'index' && f.bench && f.bench.name
+                ? '跟踪 ' + f.bench.name
+                : '',
               periodText: f.holdingsPeriod || '未披露',
               lastDayPctText: util.fmtPct(f.lastDayPct),
               lastDayCls: util.clsOf(f.lastDayPct),
@@ -245,17 +250,8 @@ Page({
     const W = this._chartW || 1;
     const chartW = W - padX - 8;
     const ratio = Math.min(1, Math.max(0, (touch.x - padX) / chartW));
-    const toMin = (s) => Number(s.slice(0, 2)) * 60 + Number(s.slice(3));
-    const T_SPAN = 240;
-    const compTarget = toMin('09:30') + ratio * T_SPAN;
-    let idx = 0;
-    let best = Infinity;
-    pts.forEach(function (p, i) {
-      const m = toMin(p.t);
-      const cm = m <= 690 ? m : m - 90;
-      const d = Math.abs(cm - compTarget);
-      if (d < best) { best = d; idx = i; }
-    });
+    // x 轴按点索引均布（与 chart.js 绘制一致），直接按比例取索引
+    const idx = Math.round(ratio * (pts.length - 1));
     const p = pts[idx];
     if (this.data.touchIdx === idx) return;
     this.setData({

@@ -37,12 +37,12 @@ function drawTrend(canvas, size, trend, selIdx) {
   min -= span * 0.12;
   max += span * 0.12;
 
-  // x 轴固定映射 09:30-15:00，午休（11:30-13:00）不体现，压缩掉该区间
-  const toMin = function (s) { return Number(s.slice(0, 2)) * 60 + Number(s.slice(3)); };
-  const T_START = toMin('09:30'); // 570
-  const T_SPAN = 240; // 570→690(上午120) + 780→900(下午120)，中间午休90分钟压缩
-  const compMin = function (m) { return m <= 690 ? m : m - 90; };
-  const xAtT = function (t) { return padX + (chartW * (compMin(toMin(t)) - T_START)) / T_SPAN; };
+  // x 轴：按点索引均匀分布（不按时间映射）
+  // A 股 241 点（09:30-11:30/13:00-15:00）与原时间压缩映射完全一致；
+  // 港股（午休 12:00-13:00、16:00 收盘）/美股等非 A 股时段自动适配，不会错位
+  const xAtIdx = function (i) {
+    return padX + (chartW * i) / (pts.length - 1);
+  };
   const yAt = function (v) { return padT + chartH * (1 - (v - min) / (max - min)); };
 
   const lastPct = pts[pts.length - 1].pct;
@@ -75,12 +75,12 @@ function drawTrend(canvas, size, trend, selIdx) {
   grad.addColorStop(0, rising ? 'rgba(224,64,63,0.22)' : 'rgba(18,160,92,0.22)');
   grad.addColorStop(1, rising ? 'rgba(224,64,63,0.02)' : 'rgba(18,160,92,0.02)');
   ctx.beginPath();
-  ctx.moveTo(xAtT(pts[0].t), yAt(pts[0].nav));
-  pts.forEach(function (p) {
-    ctx.lineTo(xAtT(p.t), yAt(p.nav));
+  ctx.moveTo(xAtIdx(0), yAt(pts[0].nav));
+  pts.forEach(function (p, i) {
+    ctx.lineTo(xAtIdx(i), yAt(p.nav));
   });
-  ctx.lineTo(xAtT(pts[pts.length - 1].t), padT + chartH);
-  ctx.lineTo(xAtT(pts[0].t), padT + chartH);
+  ctx.lineTo(xAtIdx(pts.length - 1), padT + chartH);
+  ctx.lineTo(xAtIdx(0), padT + chartH);
   ctx.closePath();
   ctx.fillStyle = grad;
   ctx.fill();
@@ -88,7 +88,7 @@ function drawTrend(canvas, size, trend, selIdx) {
   // 折线
   ctx.beginPath();
   pts.forEach(function (p, i) {
-    const x = xAtT(p.t);
+    const x = xAtIdx(i);
     const y = yAt(p.nav);
     if (i === 0) ctx.moveTo(x, y);
     else ctx.lineTo(x, y);
@@ -110,20 +110,20 @@ function drawTrend(canvas, size, trend, selIdx) {
   ctx.fillStyle = '#6b7280';
   ctx.fillText('0.00%', padX - 6, yBase);
 
-  // 底部时间轴
+  // 底部时间轴：动态取首/中/尾三点时间（适配不同市场交易时段）
   ctx.textBaseline = 'top';
   ctx.fillStyle = '#8a9099';
-  const ticks = ['09:30', '11:30/13:00', '15:00'];
-  const tickT = ['09:30', '11:30', '15:00'];
+  const mid = Math.round((pts.length - 1) / 2);
+  const ticks = [pts[0].t, pts[mid].t, pts[pts.length - 1].t];
+  const tickX = [xAtIdx(0), xAtIdx(mid), xAtIdx(pts.length - 1)];
   ticks.forEach(function (tk, i) {
-    const x = xAtT(tickT[i]);
     ctx.textAlign = i === 0 ? 'left' : i === ticks.length - 1 ? 'right' : 'center';
-    ctx.fillText(tk, x, padT + chartH + 4);
+    ctx.fillText(tk, tickX[i], padT + chartH + 4);
   });
 
   // 触摸游标
   if (selIdx >= 0 && selIdx < pts.length) {
-    const x = xAtT(pts[selIdx].t);
+    const x = xAtIdx(selIdx);
     const y = yAt(pts[selIdx].nav);
     ctx.strokeStyle = '#9aa3ad';
     ctx.lineWidth = 1;

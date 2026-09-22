@@ -17,7 +17,8 @@ const TTL = {
   daychgHot: 5 * 60 * 1000,         // 19:00–24:00：余热期，5min
   daychgNight: 30 * 60 * 1000,      // 00:00–09:30：隔夜稳定，30min
   trend: 60 * 1000,
-  industry: 24 * 60 * 60 * 1000
+  industry: 24 * 60 * 60 * 1000,
+  bench: 24 * 60 * 60 * 1000       // 跟踪标的几乎不变，与 info 同档 24h
 };
 
 /** 北京时间 Date（云函数运行在 UTC，需偏移 +8 小时再取小时/日期） */
@@ -94,15 +95,27 @@ async function fetchInfo(code) {
   });
 }
 
+/** 跟踪指数：仅指数型基金调用，缓存 24h */
+async function fetchBenchmarkIndex(code) {
+  return cache.wrap('bench:' + code, TTL.bench, function () {
+    return em.getBenchmarkIndex(code);
+  });
+}
+
 async function fetchHoldings(code) {
   return cache.wrap('hold:' + code, TTL.holdings, function () {
     return em.getHoldings(code);
   });
 }
 
-async function fetchTrend(secid) {
-  return cache.wrap('trend:' + secid, TTL.trend, function () {
-    return em.getTrend(secid);
+async function fetchTrend(secidOrTx) {
+  return cache.wrap('trend:' + secidOrTx, TTL.trend, function () {
+    // secid 形如 "1.600519"（含点），走个股分时；
+    // txCode 形如 "sh000300"/"hkHSTECH"（不含点），走指数分时
+    if (String(secidOrTx).indexOf('.') > 0) {
+      return em.getTrend(secidOrTx);
+    }
+    return em.getIndexTrend(secidOrTx);
   });
 }
 
@@ -122,8 +135,10 @@ async function fetchLastDayChange(code) {
   });
 }
 
-/** 单只基金估算：前十大持仓自建（所有基金类型同一路径，不再使用第三方估值） */
-async function estimateOne(code, info, quotes, withStocks, holdings) {
+/** 单只基金估算：前十大持仓自建（所有基金类型同一路径，不再使用第三方估值）
+ *  指数型基金若拿到跟踪指数行情，优先采用指数涨跌幅（覆盖度 100%）
+ */
+async function estimateOne(code, info, quotes, withStocks, holdings, bench) {
   const base = {
     code: code,
     name: info ? info.name : code,
@@ -162,6 +177,23 @@ async function estimateOne(code, info, quotes, withStocks, holdings) {
     return base;
   }
 
+  const ftypeStr = String(base.ftype || '');
+  const isIndexFund = /指数|ETF|被动|联接|LOF|增强/.test(ftypeStr);
+
+  // 指数型基金：优先用跟踪指数涨跌幅（基准仓位约 95%，幅度可偏大约 5%）
+  // bench.txCode 为空代表是 QDII 跟踪标的或中证主题指数（CSI*），腾讯无行情，跳过走持仓加权
+  if (isIndexFund && bench && bench.txCode) {
+    const q = quotes && quotes[bench.txCode];
+    if (q && Number.isFinite(q.pct)) {
+      base.source = 'index';
+      base.coverage = 100; // 跟踪指数天然 100% 覆盖
+      base.estPct = round(q.pct, 3);
+      base.dataDate = q.date || '';
+      base.bench = { name: bench.name, symbol: bench.symbol };
+      return base;
+    }
+    // 降级到下面持仓加权分支
+  }
   // 数据所属日期：取重仓股实时行情日期（腾讯/新浪，最准确），用于前端判断是否为当天数据
   if (!holdings) holdings = await fetchHoldings(code);
   if (holdings && holdings.stocks) {
@@ -237,7 +269,20 @@ async function estimateFunds(codes, withStocks) {
     })
   );
 
+  // 2.5 跟踪指数：仅对指数型基金拉取（蛋卷 API，缓存 24h）
+  const benchMap = {};
+  await Promise.all(
+    list.map(async function (code) {
+      const info = infos[code];
+      if (!info) return;
+      if (!/指数|ETF|被动|联接|LOF|增强/.test(String(info.ftype || ''))) return;
+      const b = await fetchBenchmarkIndex(code);
+      if (b) benchMap[code] = b;
+    })
+  );
+
   // 3. 重仓股去重合并，按 secid 粒度二级缓存行情（避免组合 key 碎片化）
+  //    指数代码（如 sh000300）也一并并入批量行情请求（走 em.getIndexQuotes）
   const secidSet = {};
   Object.keys(holdingsMap).forEach(function (code) {
     holdingsMap[code].stocks.forEach(function (s) {
@@ -245,9 +290,16 @@ async function estimateFunds(codes, withStocks) {
     });
   });
   const secids = Object.keys(secidSet);
+  // 收集指数代码（腾讯代码，无 secid），用于走 getIndexQuotes
+  const txOnlyCodes = [];
+  Object.keys(benchMap).forEach(function (code) {
+    const tx = benchMap[code].txCode;
+    if (tx && txOnlyCodes.indexOf(tx) < 0) txOnlyCodes.push(tx);
+  });
   let quotes = {};
+
+  // 3a. 重仓股行情（按 secid）
   if (secids.length) {
-    // 先逐个查单条缓存，命中直接复用；只对缺失的 secid 批量发请求
     const cached = {};
     const miss = [];
     secids.forEach(function (secid) {
@@ -269,10 +321,30 @@ async function estimateFunds(codes, withStocks) {
     }
   }
 
+  // 3b. 指数行情（按 txCode，缓存 key 形如 q:sh000300）
+  if (txOnlyCodes.length) {
+    const txCached = {};
+    const txMiss = [];
+    txOnlyCodes.forEach(function (tx) {
+      const v = cache.get('q:' + tx, TTL.quote);
+      if (v !== undefined) txCached[tx] = v;
+      else txMiss.push(tx);
+    });
+    if (txMiss.length) {
+      const txFresh = await em.getIndexQuotes(txMiss);
+      Object.keys(txFresh).forEach(function (k) {
+        cache.set('q:' + k, txFresh[k]);
+      });
+      Object.assign(quotes, txCached, txFresh);
+    } else {
+      Object.assign(quotes, txCached);
+    }
+  }
+
   // 4. 逐只计算
   const results = await Promise.all(
     list.map(function (code) {
-      return estimateOne(code, infos[code], quotes, withStocks, holdingsMap[code]).catch(function (e) {
+      return estimateOne(code, infos[code], quotes, withStocks, holdingsMap[code], benchMap[code]).catch(function (e) {
         console.error('estimateOne failed', code, (e && e.stack) || e);
         return {
           code: code,
@@ -319,7 +391,9 @@ async function attachIndustries(results) {
 }
 
 /**
- * 当日估算净值走势（分钟级）：重仓股分时涨跌按权重加权合成
+ * 当日估算净值走势（分钟级）：
+ *  - 指数型基金有跟踪指数：直接用指数分时（一条线，无需加权）
+ *  - 其他：重仓股分时涨跌按权重加权合成
  * @returns {{prevNav:number, points:[{t:'HH:mm', pct:number, nav:number}]}|null}
  */
 async function estimateTrend(code) {
@@ -327,18 +401,35 @@ async function estimateTrend(code) {
   // 债券型基金：持仓以债券为主，分时合成无意义，直接返回 null
   if (info && /债|纯债|信用|利率/.test(String(info.ftype || ''))) return null;
 
-  const holdings = await fetchHoldings(code);
-  if (!holdings || !holdings.stocks || !holdings.stocks.length) return null;
-
-  // 指数/ETF联接基金：前十覆盖度天然偏低，分时合成同样放宽阈值
-  const ftype = String((info && info.ftype) || '');
-  const isIndex = /指数|ETF|被动|联接|LOF|增强/.test(ftype);
-  const looseCoverage = isIndex;
-
   // 净值基准：统一从 lsjz 取当日单位净值（不再依赖 info 的 24h 缓存）
   const last = await fetchLastDayChange(code);
   const prevNav = (last && last.nav) || 0;
   if (!prevNav) return null;
+
+  const ftype = String((info && info.ftype) || '');
+  const isIndex = /指数|ETF|被动|联接|LOF|增强/.test(ftype);
+
+  // 指数型基金：直接用跟踪指数分时（比重仓股合成更准）
+  if (isIndex) {
+    const bench = await fetchBenchmarkIndex(code);
+    if (bench && bench.txCode) {
+      const t = await fetchTrend(bench.txCode); // 走 em.getIndexTrend，缓存 60s
+      if (t && t.points && t.points.length > 1) {
+        // 港股交易时段与 A 股不同（9:30-12:00/13:00-16:00），保留全量点位
+        // 但基金净值估算只关心涨跌幅，无需截断时段
+        const points = t.points.map(function (p) {
+          return { t: p.t, pct: round(p.pct, 3), nav: round(prevNav * (1 + p.pct / 100), 4) };
+        });
+        return { prevNav: prevNav, points: points, date: t.date };
+      }
+    }
+    // 跟踪指数行情缺失，降级走重仓股合成
+  }
+
+  const holdings = await fetchHoldings(code);
+  if (!holdings || !holdings.stocks || !holdings.stocks.length) return null;
+
+  const looseCoverage = isIndex;
 
   // 并发取各重仓股分时（缓存 60s）
   const trends = {};
