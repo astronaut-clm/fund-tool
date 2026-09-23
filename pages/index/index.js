@@ -23,7 +23,8 @@ Page({
     dragOffsetY: 0,
     editMode: false,
     selectedCount: 0,
-    allSelected: false
+    allSelected: false,
+    pctDateText: ''
   },
 
   onLoad() {
@@ -206,7 +207,11 @@ Page({
             selected: old ? !!old.selected : false
           };
         });
-        this.setData({ funds: funds, selectedCount: funds.filter(function (it) { return it.selected; }).length });
+        let pctDateText = '';
+        (list || []).forEach(function (f) {
+          if (!pctDateText && f.dataDate) pctDateText = util.fmtDataDate(f.dataDate);
+        });
+        this.setData({ funds: funds, pctDateText: pctDateText, selectedCount: funds.filter(function (it) { return it.selected; }).length });
       })
       .catch((err) => {
         wx.showToast({ title: err.message || '加载失败', icon: 'none', duration: 2500 });

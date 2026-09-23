@@ -70,6 +70,10 @@
     </view>
 
     <view class="fund-list">
+      <view wx:if="{{!editMode}}" class="tr th">
+        <text class="td name">名称</text>
+        <text class="td num">涨幅<text wx:if="{{pctDateText}}" class="sub">{{pctDateText}}</text></text>
+      </view>
       <view
         wx:for="{{funds}}"
         wx:key="code"

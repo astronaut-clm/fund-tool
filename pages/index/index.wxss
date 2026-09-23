@@ -210,6 +210,38 @@
   overflow: hidden;
 }
 
+/* 表头 */
+.tr.th {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16rpx 24rpx;
+  background: #e3ecfb;
+  border-bottom: 1rpx solid #d5e0fb;
+}
+
+.tr.th .name {
+  flex: 1;
+  font-size: 26rpx;
+  color: #4a5a78;
+  font-weight: 600;
+}
+
+.tr.th .num {
+  font-size: 26rpx;
+  color: #4a5a78;
+  flex-shrink: 0;
+  font-weight: 600;
+}
+
+.tr.th .num .sub {
+  font-size: 20rpx;
+  color: #7d8ba6;
+  font-weight: 400;
+  vertical-align: sub;
+  margin-left: 2rpx;
+}
+
 .fund {
   display: flex;
   align-items: center;
