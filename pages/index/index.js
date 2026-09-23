@@ -53,7 +53,11 @@ Page({
     addFundName: '',
     addSearching: false,
     addError: '',
-    editModeOn: false
+    editModeOn: false,
+    backupBusy: false,
+    backupTimeText: '',
+    backupCodeCount: 0,
+    backupHoldingCount: 0
   },
 
   onLoad() {
@@ -65,10 +69,12 @@ Page({
       onTick: () => this.load()
     });
     this.setData({ history: util.getHistory() });
+    this.refreshBackupTime();
     this.load();
   },
 
   onShow() {
+    this.refreshBackupTime();
     // 从详情页返回：搜索窗口开则刷新 added 状态，关则刷新自选列表
     if (this.data.showResults && this.data.results.length) {
       const codes = util.getCodes();
@@ -578,5 +584,114 @@ Page({
     this.closeAddModal();
     this.load();
     wx.showToast({ title: '已保存', icon: 'success' });
+  },
+
+  /* ============ 云备份 ============ */
+
+  refreshBackupTime() {
+    const ts = util.getBackupTs();
+    this.setData({
+      backupTimeText: ts ? util.fmtDateTime(ts) : '尚未备份'
+    });
+  },
+
+  /** 点击 ☁：智能同步 */
+  onOpenBackup() {
+    if (this.data.backupBusy) return;
+    const self = this;
+    self.setData({ backupBusy: true });
+    wx.cloud.callFunction({
+      name: 'backup',
+      data: { action: 'info' },
+      success(res) {
+        const r = res && res.result;
+        const remoteTs = (r && r.ok && r.data && r.data.updatedAt) || 0;
+        self.decideSync(remoteTs);
+      },
+      fail() {
+        self.setData({ backupBusy: false });
+      }
+    });
+  },
+
+  decideSync(remoteTs) {
+    const codes = util.getCodes();
+    const holdings = util.getHoldings();
+    const hasLocal = codes.length > 0 || holdings.length > 0;
+
+    if (!hasLocal) {
+      this.doRestore();
+      return;
+    }
+    if (!remoteTs) {
+      this.doBackup(codes, holdings);
+      return;
+    }
+
+    const localNewer = util.getLocalDirtyTs() > util.getBackupTs();
+    const remoteNewer = remoteTs > util.getBackupTs();
+
+    if (localNewer) {
+      this.doBackup(codes, holdings);
+    } else if (remoteNewer) {
+      this.doRestore();
+    } else {
+      this.setData({ backupBusy: false });
+    }
+  },
+
+  doBackup(codes, holdings) {
+    const self = this;
+    wx.cloud.callFunction({
+      name: 'backup',
+      data: { action: 'upload', codes: codes, holdings: holdings },
+      success(res) {
+        const r = res && res.result;
+        if (r && r.ok && r.data) {
+          util.setBackupTs(r.data.updatedAt);
+          util.touchLocalDirty(r.data.updatedAt);
+          self.setData({
+            backupTimeText: util.fmtDateTime(r.data.updatedAt),
+            backupCodeCount: r.data.codeCount,
+            backupHoldingCount: r.data.holdingCount
+          });
+        }
+      },
+      fail() {},
+      complete() {
+        self.setData({ backupBusy: false });
+      }
+    });
+  },
+
+  doRestore() {
+    const self = this;
+    wx.cloud.callFunction({
+      name: 'backup',
+      data: { action: 'pull' },
+      success(res) {
+        const r = res && res.result;
+        if (!r || !r.ok) return;
+        const data = r.data;
+        if (!data) return;
+        if (!(data.codes && data.codes.length) && !(data.holdings && data.holdings.length)) return;
+        util.setCodesSilent(data.codes || []);
+        util.setHoldingsSilent(data.holdings || []);
+        const ts = data.updatedAt || Date.now();
+        util.setBackupTs(ts);
+        util.touchLocalDirty(ts);
+        self.setData({
+          history: util.getHistory(),
+          backupTimeText: util.fmtDateTime(ts),
+          backupCodeCount: data.codeCount,
+          backupHoldingCount: data.holdingCount
+        });
+        self.load();
+      },
+      fail() {},
+      complete() {
+        self.setData({ backupBusy: false });
+      }
+    });
   }
 });

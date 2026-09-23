@@ -1,0 +1,14 @@
+{
+  "name": "backup",
+  "version": "1.0.0",
+  "description": "持仓与自选的云备份/恢复",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"no test\" && exit 0"
+  },
+  "dependencies": {
+    "wx-server-sdk": "2.6.3"
+  },
+  "author": "",
+  "license": "MIT"
+}

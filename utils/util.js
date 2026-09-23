@@ -14,14 +14,37 @@ function getCodes() {
 }
 
 function setCodes(codes) {
+  const list = _normalizeCodes(codes);
+  if (list === null) return [];
   try {
-    const seen = {};
-    const list = (Array.isArray(codes) ? codes : []).filter(function (c) {
-      const k = String(c);
-      if (seen[k]) return false;
+    wx.setStorageSync(CODES_KEY, list);
+    touchLocalDirty();
+    return list;
+  } catch (e) {
+    return [];
+  }
+}
+
+/** 仅规范化自选数组，不写入 storage。返回 null 表示非数组 */
+function _normalizeCodes(codes) {
+  if (!Array.isArray(codes)) return null;
+  const seen = {};
+  const list = [];
+  for (let i = 0; i < codes.length; i++) {
+    const k = String(codes[i]);
+    if (!seen[k]) {
       seen[k] = true;
-      return true;
-    });
+      list.push(k);
+    }
+  }
+  return list;
+}
+
+/** 静默写入（不触发脏标记），用于云端恢复 */
+function setCodesSilent(codes) {
+  const list = _normalizeCodes(codes);
+  if (list === null) return [];
+  try {
     wx.setStorageSync(CODES_KEY, list);
     return list;
   } catch (e) {
@@ -149,15 +172,38 @@ function getHoldings() {
 }
 
 function setHoldings(list) {
+  const arr = _normalizeHoldings(list);
+  if (arr === null) return [];
   try {
-    const seen = {};
-    const arr = (Array.isArray(list) ? list : []).filter(function (it) {
-      if (!it || !it.code) return false;
-      const k = String(it.code);
-      if (seen[k]) return false;
-      seen[k] = true;
-      return true;
-    });
+    wx.setStorageSync(HOLDINGS_KEY, arr);
+    touchLocalDirty();
+    return arr;
+  } catch (e) {
+    return [];
+  }
+}
+
+/** 仅规范化持仓数组，不写入 storage。返回 null 表示非数组 */
+function _normalizeHoldings(list) {
+  if (!Array.isArray(list)) return null;
+  const seen = {};
+  const arr = [];
+  for (let i = 0; i < list.length; i++) {
+    const it = list[i];
+    if (!it || !it.code) continue;
+    const k = String(it.code);
+    if (seen[k]) continue;
+    seen[k] = true;
+    arr.push(it);
+  }
+  return arr;
+}
+
+/** 静默写入（不触发脏标记），用于云端恢复 */
+function setHoldingsSilent(list) {
+  const arr = _normalizeHoldings(list);
+  if (arr === null) return [];
+  try {
     wx.setStorageSync(HOLDINGS_KEY, arr);
     return arr;
   } catch (e) {
@@ -197,9 +243,61 @@ function fmtMoney(n) {
   return (neg ? '-' : '') + parts.join('.');
 }
 
+/** 时间戳 → YYYY-MM-DD HH:mm */
+function fmtDateTime(ts) {
+  if (!ts) return '';
+  const d = new Date(Number(ts));
+  if (isNaN(d.getTime())) return '';
+  return (
+    d.getFullYear() +
+    '-' + pad2(d.getMonth() + 1) +
+    '-' + pad2(d.getDate()) +
+    ' ' + pad2(d.getHours()) +
+    ':' + pad2(d.getMinutes())
+  );
+}
+
+/** 上次同步时间 */
+const BACKUP_TS_KEY = 'FUND_BACKUP_TS';
+/** 本地数据最后修改时间 */
+const LOCAL_DIRTY_TS_KEY = 'FUND_LOCAL_DIRTY_TS';
+
+function getBackupTs() {
+  try {
+    return Number(wx.getStorageSync(BACKUP_TS_KEY)) || 0;
+  } catch (e) {
+    return 0;
+  }
+}
+
+function setBackupTs(ts) {
+  try {
+    wx.setStorageSync(BACKUP_TS_KEY, Number(ts) || Date.now());
+  } catch (e) {
+    /* ignore */
+  }
+}
+
+function getLocalDirtyTs() {
+  try {
+    return Number(wx.getStorageSync(LOCAL_DIRTY_TS_KEY)) || 0;
+  } catch (e) {
+    return 0;
+  }
+}
+
+function touchLocalDirty(ts) {
+  try {
+    wx.setStorageSync(LOCAL_DIRTY_TS_KEY, Number(ts) || Date.now());
+  } catch (e) {
+    /* ignore */
+  }
+}
+
 module.exports = {
   getCodes: getCodes,
   setCodes: setCodes,
+  setCodesSilent: setCodesSilent,
   addCode: addCode,
   removeCode: removeCode,
   getHistory: getHistory,
@@ -216,7 +314,13 @@ module.exports = {
   nowText: nowText,
   getHoldings: getHoldings,
   setHoldings: setHoldings,
+  setHoldingsSilent: setHoldingsSilent,
   setHolding: setHolding,
   removeHolding: removeHolding,
-  fmtMoney: fmtMoney
+  fmtMoney: fmtMoney,
+  fmtDateTime: fmtDateTime,
+  getBackupTs: getBackupTs,
+  setBackupTs: setBackupTs,
+  getLocalDirtyTs: getLocalDirtyTs,
+  touchLocalDirty: touchLocalDirty
 };

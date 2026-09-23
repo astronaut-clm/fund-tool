@@ -79,6 +79,7 @@
     <view class="tabs-left">
       <text class="tab {{tab === 'hold' ? 'on' : ''}}" catchtap="switchTab" data-tab="hold">持有</text>
       <text class="tab {{tab === 'watch' ? 'on' : ''}}" catchtap="switchTab" data-tab="watch">自选</text>
+      <text class="backup-tab {{backupBusy ? 'blinking' : ''}}" catchtap="onOpenBackup">☁</text>
     </view>
     <view class="tabs-right">
       <text wx:if="{{tab === 'hold'}}" class="icon-add" catchtap="onAddHolding">＋</text>

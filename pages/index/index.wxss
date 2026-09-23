@@ -553,3 +553,28 @@
 .fund .fund-pct.profit-col {
   flex: 0 0 140rpx;
 }
+
+/* 云备份 */
+.backup-tab {
+  font-size: 32rpx;
+  color: #b0b6bd;
+  line-height: 1;
+  padding: 4rpx 0;
+  display: inline-block;
+}
+
+.backup-tab:active {
+  color: #2f6fed;
+  opacity: 0.6;
+}
+
+.backup-tab.blinking {
+  animation: backup-blink 0.6s ease-in-out infinite;
+  pointer-events: none;
+}
+
+@keyframes backup-blink {
+  0%, 100% { opacity: 1; color: #2f6fed; }
+  50% { opacity: 0.2; }
+}
+
