@@ -105,8 +105,7 @@ Page({
           };
         });
 
-        const now = new Date();
-        const today = util.pad2(now.getMonth() + 1) + '-' + util.pad2(now.getDate());
+        const today = util.fmtDataDate(f.dataDate);
 
         const isPolling = !!this._fullLoaded;
 
@@ -132,6 +131,8 @@ Page({
           if (estPctText !== oldFund.pctText) patch['fund.pctText'] = estPctText;
           if (estCls !== oldFund.cls) patch['fund.cls'] = estCls;
           patch['fund.hasPct'] = f.estPct !== null && f.estPct !== undefined;
+          const newToday = util.fmtDataDate(f.dataDate);
+          if (newToday && newToday !== this.data.today) patch['today'] = newToday;
           patch['lastTime'] = util.nowText();
 
           // rows 增量：只更新涨跌幅

@@ -114,6 +114,13 @@ function todayStr(d) {
   return '' + now.getFullYear() + pad2(now.getMonth() + 1) + pad2(now.getDate());
 }
 
+/** 把服务端返回的行情日期（YYYY-MM-DD 或 YYYYMMDD）规范为 MM-DD */
+function fmtDataDate(s) {
+  const t = String(s || '').replace(/\D/g, '');
+  if (t.length < 8) return '';
+  return t.slice(4, 6) + '-' + t.slice(6, 8);
+}
+
 /** A股交易时段：9:30-11:30 / 13:00-15:00 */
 function isTrading(d) {
   const now = d || new Date();
@@ -142,6 +149,7 @@ module.exports = {
   clsOf: clsOf,
   pad2: pad2,
   todayStr: todayStr,
+  fmtDataDate: fmtDataDate,
   isTrading: isTrading,
   nowText: nowText
 };
