@@ -8,6 +8,10 @@ module.exports = {
   pollInterval: 10000,
   // 搜索防抖（ms）
   searchDebounce: 350,
-  // 自选基金最多数量
-  maxFunds: 20
+  // 基金代码最短查询长度
+  minCodeLen: 5,
+  // 基金代码最大长度
+  maxCodeLen: 6,
+  // 搜索历史最大条数
+  maxHistory: 10
 };

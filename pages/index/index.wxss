@@ -29,11 +29,6 @@
   color: #1f2329;
 }
 
-.ph {
-  color: #b0b6bd;
-  font-size: 27rpx;
-}
-
 .clear-btn {
   color: #b0b6bd;
   font-size: 28rpx;
@@ -90,24 +85,6 @@
   color: #b0b6bd;
   border-color: #e5e7ea;
   background: #f5f6f8;
-}
-
-.section-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 24rpx 8rpx 12rpx;
-}
-
-.section-title {
-  font-size: 28rpx;
-  font-weight: 600;
-}
-
-.section-actions {
-  display: flex;
-  align-items: center;
-  gap: 24rpx;
 }
 
 .action-link {
@@ -232,6 +209,8 @@
   color: #4a5a78;
   flex-shrink: 0;
   font-weight: 600;
+  text-align: right;
+  margin-left: 24rpx;
 }
 
 .tr.th .num .sub {
@@ -250,6 +229,7 @@
   background: #ffffff;
   border-bottom: 1rpx solid #f0f1f3;
   overflow: hidden;
+  transition: transform 0.18s cubic-bezier(0.2, 0, 0, 1);
 }
 
 .fund:last-child {
@@ -286,6 +266,8 @@
   font-weight: 600;
   line-height: 1.1;
   flex-shrink: 0;
+  text-align: right;
+  margin-left: 24rpx;
 }
 
 /* 拖拽手柄 */
@@ -312,11 +294,6 @@
   position: relative;
 }
 
-/* 让位项平滑过渡 */
-.fund {
-  transition: transform 0.18s cubic-bezier(0.2, 0, 0, 1);
-}
-
 /* 拖拽中的项不要 transition，跟手 */
 .fund.dragging {
   transition: none;
@@ -325,22 +302,6 @@
 .empty {
   margin-top: 200rpx;
   text-align: center;
-}
-
-.empty-icon {
-  width: 120rpx;
-  height: 120rpx;
-  line-height: 112rpx;
-  margin: 0 auto 24rpx;
-  border: 2rpx dashed #cfd4da;
-  border-radius: 50%;
-  color: #cfd4da;
-  font-size: 60rpx;
-}
-
-.empty-title {
-  font-size: 30rpx;
-  color: #4b5563;
 }
 
 .empty-art {
@@ -396,8 +357,199 @@
   margin-left: 12rpx;
 }
 
-.empty-desc {
-  margin-top: 12rpx;
-  font-size: 26rpx;
+/* ============ 资产卡 ============ */
+.asset {
+  margin-top: 16rpx;
+  padding: 28rpx 32rpx;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.asset-item {
+  display: flex;
+  flex-direction: column;
+  gap: 8rpx;
+}
+
+.asset-item.right {
+  text-align: right;
+  align-items: flex-end;
+}
+
+.asset-label {
+  font-size: 24rpx;
   color: #8a9099;
+}
+
+.asset-value {
+  font-size: 44rpx;
+  font-weight: 700;
+  color: #1f2329;
+  letter-spacing: 1rpx;
+}
+
+.asset-value.up { color: #e0403f; }
+.asset-value.down { color: #12a05c; }
+.asset-value.flat { color: #8a9099; }
+
+/* ============ tabs ============ */
+.tabs {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 24rpx 8rpx 12rpx;
+}
+
+.tabs-left {
+  display: flex;
+  gap: 32rpx;
+}
+
+.tabs-right {
+  display: flex;
+  align-items: center;
+  gap: 24rpx;
+}
+
+.tab {
+  font-size: 30rpx;
+  color: #8a9099;
+  padding: 4rpx 0;
+  position: relative;
+}
+
+.tab.on {
+  color: #1f2329;
+  font-weight: 700;
+}
+
+.tab.on::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -6rpx;
+  height: 4rpx;
+  background: #2f6fed;
+  border-radius: 2rpx;
+}
+
+/* ============ ＋ 按钮 ============ */
+.icon-add {
+  font-size: 36rpx;
+  color: #2f6fed;
+  font-weight: 700;
+  line-height: 1;
+  padding-left: 4rpx;
+}
+
+/* ============ 添加持仓弹窗 ============ */
+.modal-mask {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 100;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 15vh 24rpx 0;
+}
+
+.modal {
+  width: 100%;
+  padding: 32rpx 36rpx 24rpx;
+  background: #fff;
+  border-radius: 24rpx;
+  box-sizing: border-box;
+}
+
+.modal-title {
+  font-size: 32rpx;
+  font-weight: 700;
+  color: #1f2329;
+  text-align: center;
+  margin-bottom: 14rpx;
+}
+
+.form-item {
+  display: flex;
+  align-items: center;
+  padding: 18rpx 0;
+  border-bottom: 1rpx solid #f0f1f3;
+  gap: 14rpx;
+}
+
+.form-item:last-of-type {
+  border-bottom: none;
+}
+
+.form-label {
+  flex-shrink: 0;
+  width: 192rpx;
+  font-size: 28rpx;
+  color: #4b5563;
+}
+
+.form-input {
+  flex: 1;
+  font-size: 30rpx;
+  color: #1f2329;
+  height: 52rpx;
+}
+
+.form-input.readonly {
+  color: #8a9099;
+}
+
+.form-name {
+  flex-shrink: 1;
+  font-size: 24rpx;
+  color: #2f6fed;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-left: 8rpx;
+}
+
+.form-name.error {
+  color: #e0403f;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 22rpx;
+  margin-top: 22rpx;
+}
+
+.btn-cancel,
+.btn-save {
+  flex: 1;
+  text-align: center;
+  padding: 18rpx 0;
+  font-size: 28rpx;
+  border-radius: 40rpx;
+}
+
+.btn-cancel {
+  color: #4b5563;
+  background: #f5f6f8;
+}
+
+.btn-save {
+  color: #fff;
+  background: #2f6fed;
+}
+
+/* 持有列表复用自选 */
+.tr.th .num.profit-col {
+  flex: 0 0 140rpx;
+}
+
+.fund .fund-pct.profit-col {
+  flex: 0 0 140rpx;
 }

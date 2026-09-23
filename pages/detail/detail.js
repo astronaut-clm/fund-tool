@@ -2,6 +2,7 @@ const api = require('../../utils/api.js');
 const util = require('../../utils/util.js');
 const poller = require('../../utils/poller.js');
 const chart = require('../../utils/chart.js');
+const config = require('../../utils/config.js');
 
 Page({
   data: {
@@ -25,7 +26,7 @@ Page({
     const code = options.code || '';
     this.setData({ code: code });
     this._poller = poller.createPoller({
-      interval: 10000,
+      interval: config.pollInterval,
       onlyTrading: true,
       guard: () => !!this.data.fund,
       onTick: (tick) => {

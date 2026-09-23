@@ -58,17 +58,87 @@
     </view>
   </view>
 
-  <!-- 自选列表 -->
-  <view wx:if="{{funds.length && !showResults}}" class="list">
-    <view class="section-head">
-      <text class="section-title">{{editMode ? '管理自选' : '我的自选'}}</text>
-      <view class="section-actions">
-        <text wx:if="{{editMode}}" class="action-link select-all" catchtap="onSelectAll">{{allSelected ? '取消全选' : '全选'}}</text>
-        <text wx:if="{{editMode}}" class="action-link delete {{selectedCount ? 'active' : ''}}" catchtap="onDeleteSelected">删除{{selectedCount ? '(' + selectedCount + ')' : ''}}</text>
-        <text class="gear" catchtap="onToggleEdit">{{editMode ? '退出' : '⚙'}}</text>
+  <!-- 资产卡（搜索框下，tab 之上） -->
+  <view wx:if="{{!showResults}}" class="asset card" catchtap="noop">
+    <view class="asset-item">
+      <view class="asset-label">总资产(元)</view>
+      <view class="asset-value">{{assetText}}</view>
+    </view>
+    <view class="asset-item">
+      <view class="asset-label">持有收益</view>
+      <view class="asset-value {{totalProfitCls}}">{{totalProfitText}}</view>
+    </view>
+    <view class="asset-item right">
+      <view class="asset-label">当日收益</view>
+      <view class="asset-value {{profitCls}}">{{profitText}}</view>
+    </view>
+  </view>
+
+  <!-- 持有 / 自选 + 操作 -->
+  <view wx:if="{{!showResults}}" class="tabs" catchtap="noop">
+    <view class="tabs-left">
+      <text class="tab {{tab === 'hold' ? 'on' : ''}}" catchtap="switchTab" data-tab="hold">持有</text>
+      <text class="tab {{tab === 'watch' ? 'on' : ''}}" catchtap="switchTab" data-tab="watch">自选</text>
+    </view>
+    <view class="tabs-right">
+      <text wx:if="{{tab === 'hold'}}" class="icon-add" catchtap="onAddHolding">＋</text>
+      <text wx:if="{{tab === 'watch' && editMode && funds.length}}" class="action-link select-all" catchtap="onSelectAll">{{allSelected ? '取消全选' : '全选'}}</text>
+      <text wx:if="{{tab === 'watch' && editMode && funds.length}}" class="action-link delete {{selectedCount ? 'active' : ''}}" catchtap="onDeleteSelected">删除{{selectedCount ? '(' + selectedCount + ')' : ''}}</text>
+      <text wx:if="{{tab === 'watch' && funds.length}}" class="gear" catchtap="onToggleEdit">{{editMode ? '退出' : '⚙'}}</text>
+    </view>
+  </view>
+
+  <!-- 添加持仓弹窗 -->
+  <view wx:if="{{addModalShow}}" class="modal-mask" catchtap="closeAddModal">
+    <view class="modal card" catchtap="noop">
+      <view class="modal-title">{{editModeOn ? '修改持仓' : '添加持仓'}}</view>
+      <view class="form-item">
+        <text class="form-label">基金代码</text>
+        <input
+          class="form-input {{editModeOn ? 'readonly' : ''}}"
+          value="{{addCode}}"
+          placeholder=""
+          placeholder-class="ph"
+          maxlength="{{maxCodeLen}}"
+          type="number"
+          disabled="{{editModeOn}}"
+          bindinput="onAddCodeInput"
+        />
+        <text wx:if="{{addSearching}}" class="form-name">查询中…</text>
+        <text wx:elif="{{addFundName}}" class="form-name">{{addFundName}}</text>
+        <text wx:elif="{{addError}}" class="form-name error">{{addError}}</text>
+      </view>
+      <view class="form-item">
+        <text class="form-label">持有金额(元)</text>
+        <input
+          class="form-input"
+          value="{{addAmount}}"
+          placeholder="0.00"
+          placeholder-class="ph"
+          type="digit"
+          bindinput="onAddAmountInput"
+        />
+      </view>
+      <view class="form-item">
+        <text class="form-label">持有收益(元)</text>
+        <input
+          class="form-input"
+          value="{{addProfit}}"
+          placeholder="0.00（可负）"
+          placeholder-class="ph"
+          type="text"
+          bindinput="onAddProfitInput"
+        />
+      </view>
+      <view class="modal-actions">
+        <text class="btn-cancel" catchtap="closeAddModal">取消</text>
+        <text class="btn-save" catchtap="onAddSave">保存</text>
       </view>
     </view>
+  </view>
 
+  <!-- 自选列表 -->
+  <view wx:if="{{funds.length && !showResults && tab === 'watch'}}" class="list">
     <view class="fund-list">
       <view wx:if="{{!editMode}}" class="tr th">
         <text class="td name">名称</text>
@@ -101,12 +171,35 @@
     <view wx:if="{{editMode}}" class="edit-hint">勾选基金后可批量删除，拖拽 ≡ 手柄可排序</view>
   </view>
 
-  <!-- 空状态 -->
-  <view wx:if="{{!funds.length && !showResults}}" class="empty">
+  <!-- 持有列表 -->
+  <view wx:if="{{!showResults && tab === 'hold' && holdRows.length}}" class="list" catchtap="noop">
+    <view class="fund-list">
+      <view class="tr th">
+        <text class="td name">名称</text>
+        <text class="td num profit-col">收益<text wx:if="{{pctDateText}}" class="sub">{{pctDateText}}</text></text>
+        <text class="td num">涨幅<text wx:if="{{pctDateText}}" class="sub">{{pctDateText}}</text></text>
+      </view>
+      <view
+        wx:for="{{holdRows}}"
+        wx:key="code"
+        class="fund {{item.cls}}"
+        catchtap="goDetail"
+        bindlongpress="onHoldRowLongPress"
+        data-code="{{item.code}}"
+      >
+        <view class="fund-name">{{item.name}}</view>
+        <view class="fund-pct profit-col {{item.profitCls}}">{{item.profitText}}</view>
+        <view class="fund-pct {{item.cls}}">{{item.pctText}}</view>
+      </view>
+    </view>
+  </view>
+
+  <!-- 空状态：持有无持仓 或 自选无基金 -->
+  <view wx:if="{{!showResults && ((tab === 'hold' && !holdRows.length) || (tab === 'watch' && !funds.length))}}" class="empty">
     <view class="empty-art">
       <text class="art-line">帮助您记录</text>
       <text class="art-main">每一天</text>
-      <text class="art-line">的收支明细</text>
+      <text class="art-line">的基金变动</text>
     </view>
   </view>
 </view>

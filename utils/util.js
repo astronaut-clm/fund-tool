@@ -1,6 +1,8 @@
+const config = require('./config.js');
+
 const CODES_KEY = 'FUND_CODES';
 const HISTORY_KEY = 'FUND_SEARCH_HISTORY';
-const HISTORY_MAX = 10;
+const HOLDINGS_KEY = 'FUND_HOLDINGS';
 
 function getCodes() {
   try {
@@ -45,7 +47,7 @@ function removeCode(code) {
   return list;
 }
 
-/** 搜索历史：最多 HISTORY_MAX 条，新的置顶，去重 */
+/** 搜索历史：最多 maxHistory 条，新的置顶，去重 */
 function getHistory() {
   try {
     const v = wx.getStorageSync(HISTORY_KEY);
@@ -61,7 +63,7 @@ function addHistory(code, name) {
       return it.code !== code;
     });
     list.unshift({ code: String(code), name: String(name || code) });
-    wx.setStorageSync(HISTORY_KEY, list.slice(0, HISTORY_MAX));
+    wx.setStorageSync(HISTORY_KEY, list.slice(0, config.maxHistory));
     return list;
   } catch (e) {
     return [];
@@ -135,6 +137,66 @@ function nowText(d) {
   return pad2(now.getHours()) + ':' + pad2(now.getMinutes()) + ':' + pad2(now.getSeconds());
 }
 
+/* ============ 持仓存储 ============ */
+
+function getHoldings() {
+  try {
+    const v = wx.getStorageSync(HOLDINGS_KEY);
+    return Array.isArray(v) ? v : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+function setHoldings(list) {
+  try {
+    const seen = {};
+    const arr = (Array.isArray(list) ? list : []).filter(function (it) {
+      if (!it || !it.code) return false;
+      const k = String(it.code);
+      if (seen[k]) return false;
+      seen[k] = true;
+      return true;
+    });
+    wx.setStorageSync(HOLDINGS_KEY, arr);
+    return arr;
+  } catch (e) {
+    return [];
+  }
+}
+
+/** 写入/更新一条持仓。amount<=0 视为删除 */
+function setHolding(code, name, amount, profit) {
+  const list = getHoldings().filter(function (h) { return h.code !== String(code); });
+  const a = Number(amount);
+  const p = Number(profit);
+  if (a > 0) {
+    list.push({
+      code: String(code),
+      name: name || code,
+      amount: a,
+      profit: Number.isFinite(p) ? p : 0
+    });
+  }
+  return setHoldings(list);
+}
+
+function removeHolding(code) {
+  const list = getHoldings().filter(function (h) { return h.code !== String(code); });
+  return setHoldings(list);
+}
+
+/** 金额格式化：千分位 + 2 位小数，负数带 - */
+function fmtMoney(n) {
+  const v = Number(n);
+  if (!Number.isFinite(v)) return '--';
+  const neg = v < 0;
+  const abs = Math.abs(v).toFixed(2);
+  const parts = abs.split('.');
+  parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  return (neg ? '-' : '') + parts.join('.');
+}
+
 module.exports = {
   getCodes: getCodes,
   setCodes: setCodes,
@@ -151,5 +213,10 @@ module.exports = {
   todayStr: todayStr,
   fmtDataDate: fmtDataDate,
   isTrading: isTrading,
-  nowText: nowText
+  nowText: nowText,
+  getHoldings: getHoldings,
+  setHoldings: setHoldings,
+  setHolding: setHolding,
+  removeHolding: removeHolding,
+  fmtMoney: fmtMoney
 };

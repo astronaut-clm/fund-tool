@@ -1,6 +1,7 @@
 const api = require('../../utils/api.js');
 const util = require('../../utils/util.js');
 const poller = require('../../utils/poller.js');
+const config = require('../../utils/config.js');
 
 /** 拖拽震动：自带节流，避免快速拖动时连续触发 */
 function vibrate(type) {
@@ -8,6 +9,18 @@ function vibrate(type) {
   if (now - (vibrate._t || 0) < 80) return;
   vibrate._t = now;
   wx.vibrateShort({ type: type, fail: function () {} });
+}
+
+/** 从接口项中取当日涨幅：已公布就用实际值，否则用估算值 */
+function pickPct(f) {
+  const today = util.todayStr();
+  const dayDate = String(f.lastDayDate || '').replace(/\D/g, '').slice(0, 8);
+  const useActual =
+    f.lastDayPct !== null &&
+    f.lastDayPct !== undefined &&
+    dayDate &&
+    dayDate === today;
+  return useActual ? f.lastDayPct : f.estPct;
 }
 
 Page({
@@ -24,12 +37,29 @@ Page({
     editMode: false,
     selectedCount: 0,
     allSelected: false,
-    pctDateText: ''
+    pctDateText: '',
+    tab: 'hold',
+    holdRows: [],
+    assetText: '0.00',
+    profitText: '0.00',
+    profitCls: 'flat',
+    totalProfitText: '0.00',
+    totalProfitCls: 'flat',
+    maxCodeLen: 6,
+    addModalShow: false,
+    addCode: '',
+    addAmount: '',
+    addProfit: '',
+    addFundName: '',
+    addSearching: false,
+    addError: '',
+    editModeOn: false
   },
 
   onLoad() {
+    this.setData({ maxCodeLen: config.maxCodeLen });
     this._poller = poller.createPoller({
-      interval: 10000,
+      interval: config.pollInterval,
       onlyTrading: true,
       guard: () => util.getCodes().length > 0 && this.data.funds.length > 0,
       onTick: () => this.load()
@@ -92,7 +122,7 @@ Page({
     this.setData({ showResults: true, searching: true });
     this._timer = setTimeout(() => {
       this.doSearch(key);
-    }, 350);
+    }, config.searchDebounce);
   },
 
   onSearchBarTap() {
@@ -178,40 +208,95 @@ Page({
 
   load(isPull) {
     const codes = util.getCodes();
-    if (!codes.length) {
-      this.setData({ funds: [] });
+    const holdings = util.getHoldings();
+    const holdMap = {};
+    holdings.forEach(function (h) { holdMap[h.code] = h; });
+    // 请求码 = 自选 ∪ 持仓
+    const reqCodes = codes.slice();
+    holdings.forEach(function (h) {
+      if (reqCodes.indexOf(h.code) < 0) reqCodes.push(h.code);
+    });
+
+    if (!reqCodes.length) {
+      this.setData({ funds: [], holdRows: [], assetText: '0.00', profitText: '0.00', profitCls: 'flat', totalProfitText: '0.00', totalProfitCls: 'flat' });
       if (isPull) wx.stopPullDownRefresh();
       return Promise.resolve();
     }
 
     return api
-      .estimate(codes, false)
+      .estimate(reqCodes, false)
       .then((list) => {
-        const funds = (list || []).map((f) => {
-          // 当日净值已公布用真实涨幅，否则用估算涨幅
-          const today = util.todayStr();
+        const codeSet = {};
+        codes.forEach(function (c) { codeSet[c] = true; });
+        const funds = (list || [])
+          .filter(function (f) { return codeSet[f.code]; })
+          .map(function (f) {
+            const pct = pickPct(f);
+            const old = this.data.funds.find(function (it) { return it.code === f.code; });
+            return {
+              code: f.code,
+              name: f.name,
+              pctText: util.fmtPct(pct),
+              cls: util.clsOf(pct),
+              selected: old ? !!old.selected : false
+            };
+          }.bind(this));
+        // 持仓列表 + 资产汇总
+        // 账户资产 = Σ(持有金额) + 当日总收益
+        // 当真实涨幅公布后，把当天收益固化进持有收益
+        let asset = 0;
+        let dayProfit = 0;
+        let totalProfit = 0;
+        const holdRows = [];
+        const today = util.todayStr();
+        const holdingsToUpdate = [];
+        (list || []).forEach(function (f) {
+          const h = holdMap[f.code];
+          if (!h) return;
+          const pct = pickPct(f);
+          const p = Number(pct);
+          const dayVal = h.amount * (Number.isFinite(p) ? p : 0) / 100;
           const dayDate = String(f.lastDayDate || '').replace(/\D/g, '').slice(0, 8);
-          const useActual =
-            f.lastDayPct !== null &&
-            f.lastDayPct !== undefined &&
-            dayDate &&
-            dayDate === today;
-          const pct = useActual ? f.lastDayPct : f.estPct;
-          // 编辑模式下轮询刷新保留勾选状态
-          const old = this.data.funds.find(function (it) { return it.code === f.code; });
-          return {
+          const realPublished = dayDate === today && f.lastDayPct !== null && f.lastDayPct !== undefined;
+          if (realPublished) {
+            const newProfit = (h.profit || 0) + dayVal;
+            holdingsToUpdate.push({ code: h.code, name: h.name, amount: h.amount, profit: newProfit });
+            totalProfit += newProfit;
+          } else {
+            dayProfit += dayVal;
+            totalProfit += (h.profit || 0);
+          }
+          asset += h.amount + dayVal;
+          holdRows.push({
             code: f.code,
             name: f.name,
             pctText: util.fmtPct(pct),
             cls: util.clsOf(pct),
-            selected: old ? !!old.selected : false
-          };
+            profitText: (dayVal >= 0 ? '+' : '') + util.fmtMoney(dayVal),
+            profitCls: util.clsOf(dayVal)
+          });
         });
+        // 真实涨幅公布后，把更新的持有收益写回 storage
+        if (holdingsToUpdate.length) {
+          holdingsToUpdate.forEach(function (it) {
+            util.setHolding(it.code, it.name, it.amount, it.profit);
+          });
+        }
         let pctDateText = '';
         (list || []).forEach(function (f) {
           if (!pctDateText && f.dataDate) pctDateText = util.fmtDataDate(f.dataDate);
         });
-        this.setData({ funds: funds, pctDateText: pctDateText, selectedCount: funds.filter(function (it) { return it.selected; }).length });
+        this.setData({
+          funds: funds,
+          pctDateText: pctDateText,
+          selectedCount: funds.filter(function (it) { return it.selected; }).length,
+          holdRows: holdRows,
+          assetText: util.fmtMoney(asset),
+          profitText: (dayProfit >= 0 ? '+' : '') + util.fmtMoney(dayProfit),
+          profitCls: util.clsOf(dayProfit),
+          totalProfitText: (totalProfit >= 0 ? '+' : '') + util.fmtMoney(totalProfit),
+          totalProfitCls: util.clsOf(totalProfit)
+        });
       })
       .catch((err) => {
         wx.showToast({ title: err.message || '加载失败', icon: 'none', duration: 2500 });
@@ -366,5 +451,132 @@ Page({
         wx.showToast({ title: '已删除', icon: 'success' });
       }
     });
+  },
+
+  /** 持仓：tab 切换 */
+  switchTab(e) {
+    const tab = e.currentTarget.dataset.tab;
+    if (tab && tab !== this.data.tab) this.setData({ tab: tab });
+  },
+
+  /** 长按打开修改弹窗 */
+  onHoldRowLongPress(e) {
+    const code = e.currentTarget.dataset.code;
+    const h = util.getHoldings().find(function (it) { return it.code === code; });
+    if (!h) return;
+    this.setData({
+      addModalShow: true,
+      addCode: h.code,
+      addFundName: h.name,
+      addAmount: String(h.amount),
+      addProfit: String(h.profit || 0),
+      addSearching: false,
+      addError: '',
+      editModeOn: true
+    });
+  },
+
+  /** 添加持仓：打开弹窗 */
+  onAddHolding() {
+    this.setData({
+      addModalShow: true,
+      addCode: '',
+      addAmount: '',
+      addProfit: '',
+      addFundName: '',
+      addSearching: false,
+      addError: '',
+      editModeOn: false
+    });
+  },
+
+  onAddCodeInput(e) {
+    const code = (e.detail.value || '').trim();
+    this.setData({ addCode: e.detail.value || '', addFundName: '', addError: '' });
+    if (this._addTimer) clearTimeout(this._addTimer);
+    if (!code || code.length < config.minCodeLen) {
+      this.setData({ addSearching: false });
+      return;
+    }
+    this.setData({ addSearching: true });
+    this._addTimer = setTimeout(() => {
+      this.lookupAdd(code);
+    }, config.searchDebounce);
+  },
+
+  lookupAdd(code) {
+    const self = this;
+    api
+      .search(code)
+      .then((list) => {
+        if (code !== (self.data.addCode || '').trim()) return;
+        self.setData({ addSearching: false });
+        const hit = (list || []).find(function (it) { return it.code === code; });
+        if (hit) {
+          self.setData({ addFundName: hit.name, addError: '' });
+        } else {
+          self.setData({ addFundName: '', addError: '未找到该基金' });
+        }
+      })
+      .catch(() => {
+        if (code !== (self.data.addCode || '').trim()) return;
+        self.setData({ addSearching: false, addFundName: '', addError: '查询失败' });
+      });
+  },
+
+  onAddAmountInput(e) {
+    this.setData({ addAmount: e.detail.value || '' });
+  },
+
+  onAddProfitInput(e) {
+    let v = (e.detail.value || '').replace(/[^\d.-]/g, '');
+    if (v.indexOf('-') > 0) v = v[0] === '-' ? '-' + v.replace(/-/g, '') : v.replace(/-/g, '');
+    const firstDot = v.indexOf('.');
+    if (firstDot >= 0) {
+      v = v.slice(0, firstDot + 1) + v.slice(firstDot + 1).replace(/\./g, '');
+    }
+    this.setData({ addProfit: v });
+  },
+
+  closeAddModal() {
+    this.setData({ addModalShow: false });
+  },
+
+  onAddSave() {
+    const code = (this.data.addCode || '').trim();
+    const name = this.data.addFundName || code;
+    const amount = Number(this.data.addAmount);
+    const profit = Number(this.data.addProfit || 0);
+
+    if (!code) {
+      wx.showToast({ title: '请输入基金代码', icon: 'none' });
+      return;
+    }
+    if (!Number.isFinite(amount) || amount < 0) {
+      wx.showToast({ title: '持有金额不合法', icon: 'none' });
+      return;
+    }
+    if (!Number.isFinite(profit)) {
+      wx.showToast({ title: '持有收益不合法', icon: 'none' });
+      return;
+    }
+
+    // 修改模式：金额 0 视为删除
+    if (this.data.editModeOn && amount === 0) {
+      util.removeHolding(code);
+      this.closeAddModal();
+      this.load();
+      wx.showToast({ title: '已删除', icon: 'success' });
+      return;
+    }
+    if (!this.data.editModeOn && amount <= 0) {
+      wx.showToast({ title: '持有金额需大于0', icon: 'none' });
+      return;
+    }
+
+    util.setHolding(code, name, amount, profit);
+    this.closeAddModal();
+    this.load();
+    wx.showToast({ title: '已保存', icon: 'success' });
   }
 });
