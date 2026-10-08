@@ -182,18 +182,19 @@ async function getLastDayChange(fcode) {
     Date.now();
   const json = JSON.parse(await req(url, 'https://fundf10.eastmoney.com/', 4000));
   const list = (json && json.Data && json.Data.LSJZList) || [];
+  const days = [];
   for (let i = 0; i < list.length; i++) {
     const pct = parseFloat(list[i].JZZZL);
     const nav = parseFloat(list[i].DWJZ);
-    if (Number.isFinite(pct)) {
-      return {
-        date: String(list[i].FSRQ || ''),
-        pct: pct,
-        nav: Number.isFinite(nav) ? nav : null
-      };
-    }
+    if (!Number.isFinite(pct)) continue;
+    days.push({
+      date: String(list[i].FSRQ || ''),
+      pct: pct,
+      nav: Number.isFinite(nav) ? nav : null
+    });
   }
-  return null;
+  if (!days.length) return null;
+  return { date: days[0].date, pct: days[0].pct, nav: days[0].nav, days: days };
 }
 
 /** 解析 jjcc 持仓表格（可能含多个报告期），返回按报告期倒序 */

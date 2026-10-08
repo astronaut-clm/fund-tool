@@ -211,8 +211,11 @@ function setHoldingsSilent(list) {
   }
 }
 
-/** 写入/更新一条持仓（保持原有位置，不挪到末尾）。amount<=0 视为删除 */
-function setHolding(code, name, amount, profit) {
+/**
+ * 写入/更新一条持仓（保持原有位置，不挪到末尾）。amount<=0 视为删除
+ * foldDate：持有收益/持有金额对应的净值日(YYYYMMDD)；传空表示以本次录入值为新基准，不再补结转
+ */
+function setHolding(code, name, amount, profit, foldDate) {
   const c = String(code);
   const a = Number(amount);
   const p = Number(profit);
@@ -220,7 +223,8 @@ function setHolding(code, name, amount, profit) {
     code: c,
     name: name || c,
     amount: a,
-    profit: Number.isFinite(p) ? p : 0
+    profit: Number.isFinite(p) ? p : 0,
+    foldDate: foldDate ? String(foldDate) : ''
   };
   const list = getHoldings();
   let found = false;

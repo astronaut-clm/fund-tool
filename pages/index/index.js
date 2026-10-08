@@ -26,6 +26,27 @@ function pickPct(f, today) {
   return hasActualPct(f, today) ? f.lastDayPct : f.estPct;
 }
 
+/** 净值日字符串 → YYYYMMDD */
+function navKey(s) {
+  return String(s || '').replace(/\D/g, '').slice(0, 8);
+}
+
+/**
+ * 未结转的净值日：date > foldDate 且已披露的，按日期升序
+ * 用于补结转「当晚没打开 App 而漏掉的交易日」，避免收益永久丢失
+ */
+function missedNavDays(f, foldDate) {
+  const out = [];
+  (f.navDays || []).forEach(function (d) {
+    const k = navKey(d.date);
+    const pct = Number(d.pct);
+    if (!k || k <= foldDate || !Number.isFinite(pct)) return;
+    out.push({ day: k, pct: pct });
+  });
+  out.sort(function (a, b) { return a.day < b.day ? -1 : 1; });
+  return out;
+}
+
 Page({
   data: {
     keyword: '',
@@ -253,8 +274,8 @@ Page({
             };
           }.bind(this));
         // 持仓列表 + 资产汇总
-        // 账户资产 = Σ(持有金额) + 当日总收益
-        // 当真实涨幅公布后，把当天收益固化进持有收益
+        // 持有收益 = 截至「已结转净值日(foldDate)」的累计收益，当日净值公布后才结转，且每个净值日只结转一次
+        // 总资产   = Σ(持有金额) + 尚未结转的当日收益
         let asset = 0;
         let dayProfit = 0;
         let totalProfit = 0;
@@ -265,23 +286,51 @@ Page({
           if (!h) return;
           const pct = pickPct(f, today);
           const p = Number(pct);
-          const dayVal = h.amount * (Number.isFinite(p) ? p : 0) / 100;
-          if (hasActualPct(f, today)) {
-            const newProfit = (h.profit || 0) + dayVal;
-            updMap[h.code] = Object.assign({}, h, { profit: newProfit });
-            totalProfit += newProfit;
+          const amount = Number(h.amount) || 0;
+          const oldProfit = Number(h.profit) || 0;
+          const dayVal = amount * (Number.isFinite(p) ? p : 0) / 100;
+          const navDay = navKey(f.lastDayDate);
+          const actualToday = hasActualPct(f, today);
+
+          let curAmount = amount;
+          let curProfit = oldProfit;
+          let foldDate = h.foldDate || '';
+          let foldedToday = false;
+
+          if (!foldDate) {
+            // 首次登记：录入的持有收益即视为截至当前净值日，不叠加当日收益
+            foldDate = navDay;
+            foldedToday = actualToday;
           } else {
-            dayProfit += dayVal;
-            totalProfit += (h.profit || 0);
+            // 补齐漏结转的交易日（收益与持有金额同步推进，否则次日基数会错）
+            missedNavDays(f, foldDate).forEach(function (d) {
+              const gain = curAmount * d.pct / 100;
+              curAmount += gain;
+              curProfit += gain;
+              foldDate = d.day;
+            });
+            foldedToday = actualToday && foldDate === navDay;
           }
-          asset += h.amount + dayVal;
+          // 当日收益已结转进持有收益，就不再重复计入「当日收益」
+          const pendingDay = foldedToday ? 0 : dayVal;
+
+          if (foldDate !== (h.foldDate || '') || curAmount !== amount || curProfit !== oldProfit) {
+            updMap[h.code] = Object.assign({}, h, {
+              amount: curAmount,
+              profit: curProfit,
+              foldDate: foldDate
+            });
+          }
+          totalProfit += curProfit;
+          dayProfit += pendingDay;
+          asset += curAmount + pendingDay;
           holdRows.push({
             code: f.code,
             name: f.name,
             pctText: util.fmtPct(pct),
             cls: util.clsOf(pct),
-            profitText: (dayVal >= 0 ? '+' : '') + util.fmtMoney(dayVal),
-            profitCls: util.clsOf(dayVal),
+            profitText: (pendingDay >= 0 ? '+' : '') + util.fmtMoney(pendingDay),
+            profitCls: util.clsOf(pendingDay),
             selected: oldHoldMap[f.code] ? !!oldHoldMap[f.code].selected : false
           });
         });

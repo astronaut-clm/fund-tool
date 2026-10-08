@@ -160,6 +160,7 @@ async function estimateOne(code, info, quotes, withStocks, holdings, bench) {
     lastDayPct: null,
     lastDayDate: '',
     lastNav: null,
+    navDays: [],
     dataDate: '',
     msg: ''
   };
@@ -169,6 +170,7 @@ async function estimateOne(code, info, quotes, withStocks, holdings, bench) {
     base.lastDayPct = last.pct;
     base.lastDayDate = last.date;
     base.lastNav = last.nav;
+    base.navDays = last.days || [];
     if (last.nav) {
       base.prevNav = last.nav;
       base.navDate = last.date || base.navDate;
