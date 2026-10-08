@@ -211,20 +211,26 @@ function setHoldingsSilent(list) {
   }
 }
 
-/** 写入/更新一条持仓。amount<=0 视为删除 */
+/** 写入/更新一条持仓（保持原有位置，不挪到末尾）。amount<=0 视为删除 */
 function setHolding(code, name, amount, profit) {
-  const list = getHoldings().filter(function (h) { return h.code !== String(code); });
+  const c = String(code);
   const a = Number(amount);
   const p = Number(profit);
-  if (a > 0) {
-    list.push({
-      code: String(code),
-      name: name || code,
-      amount: a,
-      profit: Number.isFinite(p) ? p : 0
-    });
-  }
-  return setHoldings(list);
+  const item = {
+    code: c,
+    name: name || c,
+    amount: a,
+    profit: Number.isFinite(p) ? p : 0
+  };
+  const list = getHoldings();
+  let found = false;
+  const next = list.map(function (h) {
+    if (h.code !== c) return h;
+    found = true;
+    return item;
+  });
+  if (!found && a > 0) next.push(item);
+  return setHoldings(a > 0 ? next : next.filter(function (h) { return h.code !== c; }));
 }
 
 function removeHolding(code) {
@@ -241,20 +247,6 @@ function fmtMoney(n) {
   const parts = abs.split('.');
   parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ',');
   return (neg ? '-' : '') + parts.join('.');
-}
-
-/** 时间戳 → YYYY-MM-DD HH:mm */
-function fmtDateTime(ts) {
-  if (!ts) return '';
-  const d = new Date(Number(ts));
-  if (isNaN(d.getTime())) return '';
-  return (
-    d.getFullYear() +
-    '-' + pad2(d.getMonth() + 1) +
-    '-' + pad2(d.getDate()) +
-    ' ' + pad2(d.getHours()) +
-    ':' + pad2(d.getMinutes())
-  );
 }
 
 /** 上次同步时间 */
@@ -307,7 +299,6 @@ module.exports = {
   fmtNav: fmtNav,
   fmtDate: fmtDate,
   clsOf: clsOf,
-  pad2: pad2,
   todayStr: todayStr,
   fmtDataDate: fmtDataDate,
   isTrading: isTrading,
@@ -318,7 +309,6 @@ module.exports = {
   setHolding: setHolding,
   removeHolding: removeHolding,
   fmtMoney: fmtMoney,
-  fmtDateTime: fmtDateTime,
   getBackupTs: getBackupTs,
   setBackupTs: setBackupTs,
   getLocalDirtyTs: getLocalDirtyTs,

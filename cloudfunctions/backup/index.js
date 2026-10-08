@@ -57,7 +57,7 @@ function parseTs(r) {
   return 0;
 }
 
-exports.main = async (event, context) => {
+exports.main = async (event) => {
   const action = event.action || '';
   const wxCtx = cloud.getWXContext();
   if (!wxCtx || !wxCtx.OPENID) return fail('未获取到用户身份');

@@ -24,9 +24,9 @@ function chunk(arr, n) {
 }
 
 /** GET 请求，自动跟随一次重定向 */
-function req(url, referer, redirect, ms) {
+function req(url, referer, ms) {
   return new Promise(function (resolve, reject) {
-    const doReq = function (u) {
+    const doReq = function (u, redirected) {
       try {
         https
           .get(
@@ -43,10 +43,10 @@ function req(url, referer, redirect, ms) {
             function (res) {
               if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
                 res.resume();
-                if (redirect) return reject(new Error('too many redirects'));
+                if (redirected) return reject(new Error('too many redirects'));
                 let next = res.headers.location;
                 if (next.indexOf('http') !== 0) next = 'https:' + next;
-                return doReq(next);
+                return doReq(next, true);
               }
               const chunks = [];
               res.on('data', function (c) {
@@ -180,7 +180,7 @@ async function getLastDayChange(fcode) {
     fcode +
     '&pageIndex=1&pageSize=5&_=' +
     Date.now();
-  const json = JSON.parse(await req(url, 'https://fundf10.eastmoney.com/', false, 4000));
+  const json = JSON.parse(await req(url, 'https://fundf10.eastmoney.com/', 4000));
   const list = (json && json.Data && json.Data.LSJZList) || [];
   for (let i = 0; i < list.length; i++) {
     const pct = parseFloat(list[i].JZZZL);
@@ -269,7 +269,7 @@ async function getHoldingsByYear(code, year) {
     (year || '') +
     '&month=&rt=' +
     Date.now();
-  const html = await req(url, 'https://fundf10.eastmoney.com/', false, 6000);
+  const html = await req(url, 'https://fundf10.eastmoney.com/', 6000);
   if (!html || html.indexOf('<h4') < 0) return [];
   return parseJjcc(html);
 }
@@ -328,7 +328,7 @@ async function getIndustries(codes) {
     'https://push2.eastmoney.com/api/qt/ulist.np/get?ut=bd1d9ddb04089700cf9c27f6f7426281&fltt=2&invt=2&fields=f12,f14,f100&secids=' +
     codes.map(toSecid).join(',');
   try {
-    const j = JSON.parse(await req(url, 'https://quote.eastmoney.com/', false, 4000));
+    const j = JSON.parse(await req(url, 'https://quote.eastmoney.com/', 4000));
     let diff = (j && j.data && j.data.diff) || [];
     if (!Array.isArray(diff)) {
       diff = Object.keys(diff).map(function (k) { return diff[k]; });
@@ -396,10 +396,10 @@ function parseSina(text) {
 
 async function fetchBySource(source, codes) {
   if (source === 'tencent') {
-    const t = await req('https://qt.gtimg.cn/q=' + codes.join(','), 'https://gu.qq.com/', false, 4000);
+    const t = await req('https://qt.gtimg.cn/q=' + codes.join(','), 'https://gu.qq.com/', 4000);
     return parseTencent(t);
   }
-  const t = await req('https://hq.sinajs.cn/list=' + codes.join(','), 'https://finance.sina.com.cn/', false, 4000);
+  const t = await req('https://hq.sinajs.cn/list=' + codes.join(','), 'https://finance.sina.com.cn/', 4000);
   return parseSina(t);
 }
 
@@ -461,22 +461,17 @@ async function getQuotes(secids) {
   return map;
 }
 
-/** 个股分时（腾讯，入参 secid） */
-async function getTrend(secid) {
-  const tx = toTxCode(secid);
+/** 分时（腾讯）：入参 secid（"1.600519"）或腾讯代码（sh000300/hkHSTECH） */
+async function getTrend(secidOrTx) {
+  const s = String(secidOrTx || '');
+  const tx = s.indexOf('.') > 0 ? toTxCode(s) : s;
   if (!tx) return null;
   return fetchTrendByTx(tx);
 }
 
-/** 指数分时（腾讯，入参直接是腾讯代码 sh000300/hkHSTECH） */
-async function getIndexTrend(txCode) {
-  if (!txCode) return null;
-  return fetchTrendByTx(txCode);
-}
-
 async function fetchTrendByTx(tx) {
   try {
-    const t = await req('https://web.ifzq.gtimg.cn/appstock/app/minute/query?code=' + tx, 'https://gu.qq.com/', false, 5000);
+    const t = await req('https://web.ifzq.gtimg.cn/appstock/app/minute/query?code=' + tx, 'https://gu.qq.com/', 5000);
     const node = (JSON.parse(t).data || {})[tx];
     if (!node || !node.data || !node.data.data) return null;
 
@@ -506,93 +501,223 @@ async function fetchTrendByTx(tx) {
   }
 }
 
-/**
- * 指数基金跟踪标的
- * 蛋卷 performance_bench_mark 文本 → 提取指数名 → 词典查 index_code → 转 txCode
- * benchmark_index[0] 是通用对比列表（恒为沪深300），不可用
- * 返回 {symbol, name, txCode}，txCode 为空则腾讯无此指数行情
- */
+/** 境外指数代码 → 腾讯代码 */
+const US_TX_MAP = {
+  SP500: 'usINX',
+  NDX: 'usNDX',
+  DJI: 'usDJI',
+  IXIC: 'usIXIC',
+  GDAXI: 'usDAX'
+};
+
 function indexSymbolToTx(symbol) {
   const s = String(symbol || '').trim();
   if (!s) return '';
-  let m = s.match(/^(SH|SZ)(\d{6})$/);
+  const m = s.match(/^(SH|SZ)(\d{6})$/);
   if (m) return m[1].toLowerCase() + m[2];
   if (/^HK/.test(s)) return 'hk' + s.slice(2);
-  if (s === 'SP500') return 'spx';
-  if (s === 'NDX') return 'ndx';
-  if (s === 'GDAXI') return 'dax';
-  return ''; // CSI*/935600 等腾讯无行情
+  return US_TX_MAP[s] || ''; // CSI* 等腾讯无行情
 }
 
-let _indexDict = null;
-let _indexDictTs = 0;
-const INDEX_DICT_TTL = 7 * 24 * 60 * 60 * 1000;
+/** 本地别名表：指数名 → 指数代码 */
+const INDEX_ALIAS = {
+  沪深300: 'SH000300',
+  中证100: 'SH000903',
+  中证500: 'SH000905',
+  中证800: 'SH000906',
+  中证1000: 'SH000852',
+  上证50: 'SH000016',
+  上证180: 'SH000010',
+  上证红利: 'SH000015',
+  深证成指: 'SZ399001',
+  深证100: 'SZ399330',
+  创业板: 'SZ399006',
+  创业板指: 'SZ399006',
+  科创50: 'SH000688',
+  科创100: 'SH000698',
+  中证白酒: 'SZ399997',
+  中证红利: 'SH000922',
+  中证医疗: 'SZ399989',
+  中证军工: 'SZ399967',
+  中证银行: 'SZ399986',
+  中证煤炭: 'SZ399998',
+  中证传媒: 'SZ399971',
+  中证环保: 'SH000827',
+  证券公司: 'SZ399975',
+  中证全指证券公司: 'SZ399975',
+  中证新能源汽车: 'SZ399976',
+  中证新能源: 'SZ399808',
+  国证新能源车电池: 'SZ980032',
+  创业板50: 'SZ399673',
+  中证酒: 'SZ399987',
+  沪深300医药卫生: 'SH000913',
+  全指医药: 'SH000991',
+  中证全指通信设备: 'SH515880',
+  中证消费: 'SH000932',
+  上证科创板50成份: 'SH000688',
+  上证科创板芯片: 'SH000685',
+  科创芯片: 'SH000685',
+  中证海外中国互联网50: 'CSIH30533',
+  中概互联50: 'CSIH30533',
+  中国互联: 'CSIH11136',
+  恒生指数: 'HKHSI',
+  恒生科技: 'HKHSTECH',
+  国企指数: 'HKHSCEI',
+  恒生中国企业: 'HKHSCEI',
+  标普500: 'SP500',
+  标准普尔500: 'SP500',
+  纳斯达克100: 'NDX',
+  纳指100: 'NDX',
+  纳斯达克: 'IXIC',
+  道琼斯: 'DJI',
+  德国DAX: 'GDAXI'
+};
 
-/** 蛋卷指数词典：name → index_code（"恒生科技" → "HKHSTECH"），缓存 7 天 */
-async function fetchIndexDict() {
-  if (_indexDict && Date.now() - _indexDictTs < INDEX_DICT_TTL) return _indexDict;
-  try {
-    const text = await req('https://danjuanfunds.com/djapi/index_eva/dj', 'https://danjuanfunds.com/', false, 5000);
-    const json = JSON.parse(text);
-    const items = (json && json.data && json.data.items) || [];
-    const dict = {};
-    items.forEach(function (it) {
-      if (it && it.name && it.index_code) {
-        dict[String(it.name).trim()] = String(it.index_code).trim();
-      }
+/** 指数名候选：去括号、去"指数"后缀、逐个剥离"人民币/全收益/收益率"等尾缀 */
+function indexNameCandidates(name) {
+  const s = String(name || '').replace(/\s/g, '').replace(/[（(][^）)]*[）)]/g, '');
+  const SUFFIX = /(?:指数|收益率|全收益|总收益|净收益|价格|人民币计价|美元计价|人民币|美元|RMB|USD)+$/i;
+  const out = [];
+  const push = function (x) {
+    const v = String(x || '').replace(/^的/, '');
+    if (v && out.indexOf(v) < 0) out.push(v);
+  };
+
+  push(s);
+  let cur = s.replace(/指数$/, '');
+  push(cur);
+  for (let i = 0; i < 3; i++) {
+    const next = cur.replace(SUFFIX, '');
+    if (next === cur) break;
+    cur = next;
+    push(cur);
+  }
+  return out;
+}
+
+/** 腾讯代码 → 大写指数代码（sh000300 → SH000300，hkHSTECH → HKHSTECH） */
+function txToIndexSymbol(tx) {
+  const m = String(tx || '').match(/^(sh|sz|hk|us)(.+)$/);
+  if (!m) return String(tx || '').toUpperCase();
+  if (m[1] === 'hk') return 'HK' + m[2];
+  if (m[1] === 'us') return m[2].toUpperCase();
+  return m[1].toUpperCase() + m[2];
+}
+
+/** 腾讯指数联想：按指数名搜，取第一条类型为 ZS 的结果，直接给出可用的 txCode */
+async function searchIndexTx(name) {
+  const cands = indexNameCandidates(name).slice(0, 2);
+  for (let i = 0; i < cands.length; i++) {
+    const url = 'https://smartbox.gtimg.cn/s3/?q=' + encodeURIComponent(cands[i]) + '&t=gp';
+    const txt = await req(url, 'https://gu.qq.com/', 4000).catch(function () { return ''; });
+    const m = txt.match(/v_hint="([^"]*)"/);
+    if (!m || m[1] === 'N') continue;
+    const hit = m[1]
+      .split('^')
+      .map(function (s) { return s.split('~'); })
+      .filter(function (f) { return f.length >= 5 && f[4] === 'ZS' && /^(sh|sz|hk|us)/.test(f[0]); })[0];
+    if (hit) {
+      const tx = hit[0] + hit[1];
+      return { symbol: txToIndexSymbol(tx), txCode: tx };
+    }
+  }
+  return null;
+}
+
+/** 指数名 → {symbol, txCode}：本地别名表 → 腾讯联想 */
+async function resolveIndexByName(name) {
+  const cands = indexNameCandidates(name);
+  for (let i = 0; i < cands.length; i++) {
+    const symbol = INDEX_ALIAS[cands[i]];
+    if (symbol) return { symbol: symbol, txCode: indexSymbolToTx(symbol) };
+  }
+  return await searchIndexTx(name);
+}
+
+/** 天天基金 F10 页面有限流，串行化并保证最小请求间隔 */
+const F10_GAP = 250;
+let _f10Chain = Promise.resolve();
+let _f10Last = 0;
+
+function f10Fetch(fcode) {
+  const url = 'https://fundf10.eastmoney.com/jbgk_' + fcode + '.html';
+  const p = _f10Chain.then(function () {
+    const wait = F10_GAP - (Date.now() - _f10Last);
+    const delay = wait > 0 ? new Promise(function (r) { setTimeout(r, wait); }) : Promise.resolve();
+    return delay.then(function () {
+      _f10Last = Date.now();
+      return req(url, 'https://fundf10.eastmoney.com/', 8000);
     });
-    _indexDict = dict;
-    _indexDictTs = Date.now();
-    return dict;
+  });
+  _f10Chain = p.then(
+    function () {},
+    function () {}
+  );
+  return p;
+}
+
+/** 取基本概况表格字段（"跟踪标的"/"基金类型"/"业绩比较基准"） */
+function pickTableField(html, label) {
+  const m = html.match(new RegExp(label + '\\s*</th>\\s*<td[^>]*>([\\s\\S]*?)</td>'));
+  if (!m) return '';
+  return m[1].replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+/** 取正文段落（"投资目标"） */
+function pickSection(html, label, endLabel) {
+  const i = html.indexOf(label);
+  if (i < 0) return '';
+  let seg = html.slice(i + label.length);
+  const j = endLabel ? seg.indexOf(endLabel) : -1;
+  seg = j >= 0 ? seg.slice(0, j) : seg.slice(0, 2000);
+  const p = seg.match(/<p>([\s\S]*?)<\/p>/);
+  const txt = (p ? p[1] : seg).replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
+  return txt.slice(0, 300);
+}
+
+/**
+ * 天天基金 F10 基本概况
+ * {ftype, target, bench, aim}；target 为空 = 无跟踪标的（非指数型）或页面未取到
+ */
+async function getFundProfile(fcode) {
+  if (!isValidFundCode(fcode)) return null;
+  try {
+    const html = await f10Fetch(fcode);
+    if (!html || html.indexOf('基本概况') < 0) return null;
+    const target = pickTableField(html, '跟踪标的');
+    return {
+      ftype: pickTableField(html, '基金类型'),
+      target: target && !/无跟踪标的/.test(target) ? target : '',
+      bench: pickTableField(html, '业绩比较基准'),
+      aim: pickSection(html, '投资目标', '投资理念')
+    };
   } catch (e) {
-    console.warn('[fetchIndexDict] failed', (e && e.message) || e);
-    return _indexDict || {};
+    console.warn('[getFundProfile] failed', fcode, (e && e.message) || e);
+    return null;
   }
 }
 
-/** 从 performance_bench_mark 提取指数名（如"恒生科技指数收益率×95%+..."→"恒生科技指数"） */
-function extractIndexName(benchText) {
-  const t = String(benchText || '');
-  const m = t.match(/([\u4e00-\u9fa5A-Za-z0-9·]+指数)收益率/);
-  if (m) return m[1];
-  const m2 = t.match(/([^×+＋\-－]+?)(?:收益率|×|＋|\+)/);
-  if (m2) return m2[1].trim();
-  return '';
-}
-
+/**
+ * 天天基金 F10「跟踪标的」→ 归一化指数名 → 本地别名表 → 腾讯联想
+ * 返回 {symbol, name, txCode, desc, source}，txCode 为空则腾讯无此指数行情
+ */
 async function getBenchmarkIndex(fcode) {
   if (!isValidFundCode(fcode)) return null;
-  const url = 'https://danjuanfunds.com/djapi/fund/' + fcode;
-  let raw = '';
+
   try {
-    raw = await req(url, 'https://danjuanfunds.com/', false, 6000);
-    const json = JSON.parse(raw);
-    const data = json && json.data;
-    if (!data) return null;
+    const prof = await getFundProfile(fcode);
+    // target 为空 = 非指数型（页面写"无跟踪标的"）或 F10 未取到
+    if (!prof || !prof.target) return null;
 
-    const indexName = extractIndexName(data.performance_bench_mark);
-    if (!indexName) return null;
-
-    // 词典 key 不带"指数"后缀，提取名带后缀，故先精确查再去后缀查
-    const dict = await fetchIndexDict();
-    let symbol = dict[indexName] || '';
-    if (!symbol && /指数$/.test(indexName)) {
-      symbol = dict[indexName.slice(0, -2)] || '';
-    }
-
-    // A 股宽基兜底：从 benchmark_index 通用列表里按 symbol_name 匹配
-    if (!symbol && Array.isArray(data.benchmark_index)) {
-      const hit = data.benchmark_index.find(function (it) {
-        if (!it) return false;
-        const sn = String(it.symbol_name || '');
-        return sn === indexName || (sn === indexName.replace(/指数$/, ''));
-      });
-      if (hit) symbol = String(hit.symbol || '');
-    }
-
-    if (!symbol) return null;
-    const txCode = indexSymbolToTx(symbol);
-    return { symbol: symbol, name: indexName, txCode: txCode, desc: String(data.invest_orientation || '') };
+    const hit = await resolveIndexByName(prof.target);
+    if (!hit) return null;
+    return {
+      symbol: hit.symbol,
+      name: prof.target,
+      txCode: hit.txCode,
+      desc: prof.aim || '',
+      source: 'f10'
+    };
   } catch (e) {
     console.warn('[getBenchmarkIndex] failed', fcode, (e && e.message) || e);
     return null;
@@ -606,7 +731,7 @@ async function getIndexQuotes(txCodes) {
   await Promise.all(
     chunk(txCodes, BATCH).map(async function (batch) {
       try {
-        const t = await req('https://qt.gtimg.cn/q=' + batch.join(','), 'https://gu.qq.com/', false, 4000);
+        const t = await req('https://qt.gtimg.cn/q=' + batch.join(','), 'https://gu.qq.com/', 4000);
         const parsed = parseTencent(t);
         batch.forEach(function (c) {
           if (parsed[c]) result[c] = parsed[c];
@@ -622,7 +747,6 @@ async function getIndexQuotes(txCodes) {
 module.exports = {
   isValidFundCode: isValidFundCode,
   getTrend: getTrend,
-  getIndexTrend: getIndexTrend,
   searchFund: searchFund,
   getFundInfo: getFundInfo,
   getBenchmarkIndex: getBenchmarkIndex,

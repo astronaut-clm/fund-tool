@@ -5,7 +5,7 @@
     <input
       class="search-input"
       value="{{keyword}}"
-      placeholder="搜索基金代码 / 名称"
+      placeholder="搜索基金代码"
       placeholder-class="ph"
       confirm-type="search"
       bindinput="onInput"
@@ -79,15 +79,45 @@
     <view class="tabs-left">
       <text class="tab {{tab === 'hold' ? 'on' : ''}}" catchtap="switchTab" data-tab="hold">持有</text>
       <text class="tab {{tab === 'watch' ? 'on' : ''}}" catchtap="switchTab" data-tab="watch">自选</text>
-      <text class="backup-tab {{backupBusy ? 'blinking' : ''}}" catchtap="onOpenBackup">☁</text>
     </view>
     <view class="tabs-right">
-      <text wx:if="{{tab === 'hold'}}" class="icon-add" catchtap="onAddHolding">＋</text>
-      <text wx:if="{{tab === 'watch' && editMode && funds.length}}" class="action-link select-all" catchtap="onSelectAll">{{allSelected ? '取消全选' : '全选'}}</text>
-      <text wx:if="{{tab === 'watch' && editMode && funds.length}}" class="action-link delete {{selectedCount ? 'active' : ''}}" catchtap="onDeleteSelected">删除{{selectedCount ? '(' + selectedCount + ')' : ''}}</text>
-      <text wx:if="{{tab === 'watch' && funds.length}}" class="gear" catchtap="onToggleEdit">{{editMode ? '退出' : '⚙'}}</text>
+      <text wx:if="{{editMode}}" class="action-link" catchtap="onSelectAll">{{allSelected ? '取消全选' : '全选'}}</text>
+      <text wx:if="{{editMode}}" class="action-link delete {{selectedCount ? 'active' : ''}}" catchtap="onDeleteSelected">删除{{selectedCount ? '(' + selectedCount + ')' : ''}}</text>
+      <view wx:if="{{!editMode}}" class="gear-wrap">
+        <text class="gear {{backupBusy ? 'blinking' : ''}}" catchtap="onGearTap">⚙</text>
+        <!-- 设置菜单：锚定齿轮左下角 -->
+        <view wx:if="{{menuShow}}" class="gear-menu card">
+          <view class="menu-item" catchtap="onMenuSync">
+            <text class="menu-icon cloud">☁</text>
+            <text class="menu-title">云同步</text>
+          </view>
+          <view wx:if="{{tab === 'watch' ? funds.length : holdRows.length}}" class="menu-item" catchtap="onMenuEdit">
+            <view class="menu-icon setting">
+              <view class="bars">
+                <view class="bar"></view>
+                <view class="bar"></view>
+                <view class="bar"></view>
+              </view>
+            </view>
+            <text class="menu-title">列表设置</text>
+          </view>
+          <view class="menu-item" catchtap="onMenuAddHolding">
+            <view class="menu-icon add">
+              <view class="plus">
+                <view class="plus-h"></view>
+                <view class="plus-v"></view>
+              </view>
+            </view>
+            <text class="menu-title">添加持有基金</text>
+          </view>
+        </view>
+      </view>
+      <text wx:else class="gear exit" catchtap="onToggleEdit">退出</text>
     </view>
   </view>
+
+  <!-- 透明遮罩：点击菜单外区域关闭 -->
+  <view wx:if="{{menuShow}}" class="menu-mask" catchtap="closeMenu"></view>
 
   <!-- 添加持仓弹窗 -->
   <view wx:if="{{addModalShow}}" class="modal-mask" catchtap="closeAddModal">
@@ -164,7 +194,6 @@
           catchtouchmove="onDragTouchMove"
           catchtouchend="onDragTouchEnd"
           data-index="{{index}}"
-          data-code="{{item.code}}"
         >≡</view>
       </view>
     </view>
@@ -175,24 +204,37 @@
   <!-- 持有列表 -->
   <view wx:if="{{!showResults && tab === 'hold' && holdRows.length}}" class="list" catchtap="noop">
     <view class="fund-list">
-      <view class="tr th">
+      <view wx:if="{{!editMode}}" class="tr th">
         <text class="td name">名称</text>
         <text class="td num profit-col">收益<text wx:if="{{pctDateText}}" class="sub">{{pctDateText}}</text></text>
-        <text class="td num">涨幅<text wx:if="{{pctDateText}}" class="sub">{{pctDateText}}</text></text>
+        <text class="td num pct-col">涨幅<text wx:if="{{pctDateText}}" class="sub">{{pctDateText}}</text></text>
       </view>
       <view
         wx:for="{{holdRows}}"
         wx:key="code"
-        class="fund {{item.cls}}"
-        catchtap="goDetail"
+        class="fund {{item.cls}} {{dragIndex === index ? 'dragging' : ''}} {{editMode && item.selected ? 'selected' : ''}}"
+        style="{{dragIndex === index ? ('transform: translateY(' + dragOffsetY + 'px);') : (item.shift ? ('transform: translateY(' + item.shift + 'px);') : '')}}"
+        catchtap="onHoldRowTap"
         bindlongpress="onHoldRowLongPress"
         data-code="{{item.code}}"
+        data-index="{{index}}"
       >
+        <view wx:if="{{editMode}}" class="check-box {{item.selected ? 'checked' : ''}}">{{item.selected ? '✓' : ''}}</view>
         <view class="fund-name">{{item.name}}</view>
-        <view class="fund-pct profit-col {{item.profitCls}}">{{item.profitText}}</view>
-        <view class="fund-pct {{item.cls}}">{{item.pctText}}</view>
+        <view wx:if="{{!editMode}}" class="fund-pct profit-col {{item.profitCls}}">{{item.profitText}}</view>
+        <view wx:if="{{!editMode}}" class="fund-pct pct-col {{item.cls}}">{{item.pctText}}</view>
+        <view
+          wx:if="{{editMode}}"
+          class="drag-handle"
+          catchtouchstart="onDragTouchStart"
+          catchtouchmove="onDragTouchMove"
+          catchtouchend="onDragTouchEnd"
+          data-index="{{index}}"
+        >≡</view>
       </view>
     </view>
+
+    <view wx:if="{{editMode}}" class="edit-hint">勾选基金后可批量删除，拖拽 ≡ 手柄可排序</view>
   </view>
 
   <!-- 空状态：持有无持仓 或 自选无基金 -->

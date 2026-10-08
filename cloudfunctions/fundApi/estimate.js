@@ -110,12 +110,25 @@ async function fetchHoldings(code) {
 
 async function fetchTrend(secidOrTx) {
   return cache.wrap('trend:' + secidOrTx, TTL.trend, function () {
-    // secid 含点（"1.600519"）走个股分时；txCode 不含点（sh000300）走指数分时
-    if (String(secidOrTx).indexOf('.') > 0) {
-      return em.getTrend(secidOrTx);
-    }
-    return em.getIndexTrend(secidOrTx);
+    return em.getTrend(secidOrTx);
   });
+}
+
+/** 行情二级缓存：命中读缓存，缺失批量拉取后回填（cacheFilter 决定哪些 key 入缓存） */
+async function fetchQuotesWithCache(keys, fetcher, cacheFilter) {
+  const cached = {};
+  const miss = [];
+  keys.forEach(function (k) {
+    const v = cache.get('q:' + k, TTL.quote);
+    if (v !== undefined) cached[k] = v;
+    else miss.push(k);
+  });
+  if (!miss.length) return cached;
+  const fresh = (await fetcher(miss)) || {};
+  Object.keys(fresh).forEach(function (k) {
+    if (!cacheFilter || cacheFilter(k)) cache.set('q:' + k, fresh[k]);
+  });
+  return Object.assign(cached, fresh);
 }
 
 /** 上一交易日涨跌 + 当日单位净值；已命中当日净值则放宽缓存避免余热期无效刷 */
@@ -275,46 +288,16 @@ async function estimateFunds(codes, withStocks) {
     const tx = benchMap[code].txCode;
     if (tx && txOnlyCodes.indexOf(tx) < 0) txOnlyCodes.push(tx);
   });
+
   let quotes = {};
-
   if (secids.length) {
-    const cached = {};
-    const miss = [];
-    secids.forEach(function (secid) {
-      const v = cache.get('q:' + secid, TTL.quote);
-      if (v !== undefined) cached[secid] = v;
-      else miss.push(secid);
+    // 只缓存 secid 键，避免 getQuotes 返回的双索引（secid / 纯 code）重复入缓存
+    quotes = await fetchQuotesWithCache(secids, em.getQuotes, function (k) {
+      return k.indexOf('.') > 0;
     });
-    if (miss.length) {
-      const fresh = await em.getQuotes(miss);
-      if (fresh) {
-        Object.keys(fresh).forEach(function (k) {
-          if (k.indexOf('.') > 0) cache.set('q:' + k, fresh[k]);
-        });
-      }
-      quotes = Object.assign({}, cached, fresh || {});
-    } else {
-      quotes = cached;
-    }
   }
-
   if (txOnlyCodes.length) {
-    const txCached = {};
-    const txMiss = [];
-    txOnlyCodes.forEach(function (tx) {
-      const v = cache.get('q:' + tx, TTL.quote);
-      if (v !== undefined) txCached[tx] = v;
-      else txMiss.push(tx);
-    });
-    if (txMiss.length) {
-      const txFresh = await em.getIndexQuotes(txMiss);
-      Object.keys(txFresh).forEach(function (k) {
-        cache.set('q:' + k, txFresh[k]);
-      });
-      Object.assign(quotes, txCached, txFresh);
-    } else {
-      Object.assign(quotes, txCached);
-    }
+    Object.assign(quotes, await fetchQuotesWithCache(txOnlyCodes, em.getIndexQuotes));
   }
 
   // 5. 逐只计算

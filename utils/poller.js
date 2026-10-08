@@ -17,7 +17,6 @@ function createPoller(opts) {
   const guard = typeof opts.guard === 'function' ? opts.guard : function () { return true; };
 
   let timer = null;
-  let tick = 0;
   let stopped = true;
 
   function stop() {
@@ -26,7 +25,6 @@ function createPoller(opts) {
       clearTimeout(timer);
       timer = null;
     }
-    tick = 0;
   }
 
   function scheduleNext() {
@@ -47,10 +45,9 @@ function createPoller(opts) {
       scheduleNext();
       return;
     }
-    tick += 1;
     let ret;
     try {
-      ret = onTick(tick);
+      ret = onTick();
     } catch (e) {
       ret = Promise.reject(e);
     }
@@ -66,8 +63,7 @@ function createPoller(opts) {
 
   return {
     start: start,
-    stop: stop,
-    get tick() { return tick; }
+    stop: stop
   };
 }
 

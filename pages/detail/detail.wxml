@@ -4,9 +4,7 @@
 
   <view wx:elif="{{fund}}" class="hero card">
     <view class="hero-head">
-      <view class="hero-title">
-        <view class="hero-name">{{fund.name}}</view>
-      </view>
+      <view class="hero-name">{{fund.name}}</view>
       <view class="hero-watch {{inWatchlist ? 'on' : ''}}" bindtap="toggleWatch">
         {{inWatchlist ? '已添加' : '＋ 自选'}}
       </view>

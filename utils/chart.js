@@ -1,4 +1,53 @@
-/** 分时图绘制：接收 canvas node + 走势数据 + 选中点，纯绘制 */
+/** 分时图绘制 + 触摸命中：接收 canvas node + 走势数据 + 选中点 */
+const PAD_T = 18;
+const PAD_B = 16;
+const PAD_X = 46;
+const PAD_R = 8;
+// 固定时间轴：09:30-11:30 / 13:00-15:00，午休段空白
+const TOTAL_MIN = 240;
+const M_AM_S = 9 * 60 + 30;
+const M_AM_E = 11 * 60 + 30;
+const M_PM_S = 13 * 60;
+const M_PM_E = 15 * 60;
+
+function tToMin(t) {
+  if (!t) return -1;
+  const m = String(t).match(/^(\d{1,2}):(\d{2})/);
+  if (!m) return -1;
+  return Number(m[1]) * 60 + Number(m[2]);
+}
+
+/** 时间 → x 轴偏移（0..TOTAL_MIN），午休段返回 -1 表示空白 */
+function tToOffset(t) {
+  const min = tToMin(t);
+  if (min < 0) return -1;
+  if (min >= M_AM_S && min <= M_AM_E) return min - M_AM_S;
+  if (min >= M_PM_S && min <= M_PM_E) return M_AM_E - M_AM_S + (min - M_PM_S);
+  return -1;
+}
+
+/** 触摸命中：x（画布内 CSS 像素）→ 最近数据点索引，未命中返回 -1 */
+function hitTest(trend, x, width) {
+  const pts = trend && trend.points;
+  if (!pts || pts.length < 2) return -1;
+  const chartW = width - PAD_X - PAD_R;
+  if (chartW <= 0) return -1;
+  const off = Math.min(1, Math.max(0, (x - PAD_X) / chartW)) * (TOTAL_MIN - 1);
+  let bestIdx = -1;
+  let bestDist = Infinity;
+  for (let i = 0; i < pts.length; i++) {
+    const o = tToOffset(pts[i].t);
+    if (o < 0) continue;
+    const d = Math.abs(o - off);
+    if (d < bestDist) {
+      bestDist = d;
+      bestIdx = i;
+    }
+  }
+  return bestIdx;
+}
+
+/** 纯绘制 */
 function drawTrend(canvas, size, trend, selIdx) {
   if (!canvas || !size || !trend || !trend.points || trend.points.length < 2) return;
   const ctx = canvas.getContext('2d');
@@ -11,14 +60,11 @@ function drawTrend(canvas, size, trend, selIdx) {
   ctx.clearRect(0, 0, W, H);
 
   const pts = trend.points;
-  const padT = 18;
-  const padB = 16;
-  const padX = 46;
-  const chartW = W - padX - 8;
-  const chartH = H - padT - padB;
+  const chartW = W - PAD_X - PAD_R;
+  const chartH = H - PAD_T - PAD_B;
 
   // y 值域：估算净值 + 上一净值基准
-  let values = pts.map(function (p) { return p.nav; });
+  const values = pts.map(function (p) { return p.nav; });
   values.push(trend.prevNav);
   let min = Math.min.apply(null, values);
   let max = Math.max.apply(null, values);
@@ -26,42 +72,12 @@ function drawTrend(canvas, size, trend, selIdx) {
   min -= span * 0.12;
   max += span * 0.12;
 
-  const yAt = function (v) { return padT + chartH * (1 - (v - min) / (max - min)); };
-
-  // 固定时间轴：09:30-11:30/13:00-15:00（下午），午休段空白
-  const SESS = [
-    { s: '09:30', e: '11:30', len: 120 },
-    { s: '13:00', e: '15:00', len: 120 }
-  ];
-  const TOTAL_MIN = 240;
-
-  function tToMin(t) {
-    if (!t) return -1;
-    const m = String(t).match(/^(\d{1,2}):(\d{2})/);
-    if (!m) return -1;
-    return Number(m[1]) * 60 + Number(m[2]);
-  }
-  // 时间 → x 偏移（0..TOTAL_MIN），午休段返回 -1 表示空白
-  function tToOffset(t) {
-    const min = tToMin(t);
-    if (min < 0) return -1;
-    // 09:30-11:30
-    const m0 = tToMin(SESS[0].s);
-    const m1 = tToMin(SESS[0].e);
-    const m2 = tToMin(SESS[1].s);
-    const m3 = tToMin(SESS[1].e);
-    if (min >= m0 && min <= m1) return min - m0;
-    if (min >= m2 && min <= m3) return SESS[0].len + (min - m2);
-    return -1;
-  }
-  function offsetToX(off) {
-    return padX + (chartW * off) / (TOTAL_MIN - 1);
-  }
-  function tToX(t) {
+  const yAt = function (v) { return PAD_T + chartH * (1 - (v - min) / (max - min)); };
+  const offsetToX = function (off) { return PAD_X + (chartW * off) / (TOTAL_MIN - 1); };
+  const tToX = function (t) {
     const off = tToOffset(t);
-    if (off < 0) return null;
-    return offsetToX(off);
-  }
+    return off < 0 ? null : offsetToX(off);
+  };
 
   const lastPct = pts[pts.length - 1].pct;
   const rising = lastPct >= 0;
@@ -72,9 +88,9 @@ function drawTrend(canvas, size, trend, selIdx) {
   ctx.strokeStyle = '#f0f1f3';
   ctx.beginPath();
   for (let g = 0; g <= 4; g++) {
-    const y = padT + (chartH * g) / 4;
-    ctx.moveTo(padX, y);
-    ctx.lineTo(padX + chartW, y);
+    const y = PAD_T + (chartH * g) / 4;
+    ctx.moveTo(PAD_X, y);
+    ctx.lineTo(PAD_X + chartW, y);
   }
   ctx.stroke();
 
@@ -83,35 +99,41 @@ function drawTrend(canvas, size, trend, selIdx) {
   ctx.setLineDash([4, 4]);
   ctx.strokeStyle = '#c9ced4';
   ctx.beginPath();
-  ctx.moveTo(padX, yBase);
-  ctx.lineTo(padX + chartW, yBase);
+  ctx.moveTo(PAD_X, yBase);
+  ctx.lineTo(PAD_X + chartW, yBase);
   ctx.stroke();
   ctx.setLineDash([]);
 
   const xs = pts.map(function (p) { return tToX(p.t); });
 
   // 面积渐变（分段绘制，午休段不连接）
-  const grad = ctx.createLinearGradient(0, padT, 0, padT + chartH);
+  const grad = ctx.createLinearGradient(0, PAD_T, 0, PAD_T + chartH);
   grad.addColorStop(0, rising ? 'rgba(224,64,63,0.22)' : 'rgba(18,160,92,0.22)');
   grad.addColorStop(1, rising ? 'rgba(224,64,63,0.02)' : 'rgba(18,160,92,0.02)');
 
   let segStart = -1;
   function flushAreaSeg(end) {
-    if (segStart < 0 || end <= segStart) { segStart = -1; return; }
+    if (segStart < 0 || end <= segStart) {
+      segStart = -1;
+      return;
+    }
     ctx.beginPath();
     ctx.moveTo(xs[segStart], yAt(pts[segStart].nav));
     for (let i = segStart + 1; i <= end; i++) {
       ctx.lineTo(xs[i], yAt(pts[i].nav));
     }
-    ctx.lineTo(xs[end], padT + chartH);
-    ctx.lineTo(xs[segStart], padT + chartH);
+    ctx.lineTo(xs[end], PAD_T + chartH);
+    ctx.lineTo(xs[segStart], PAD_T + chartH);
     ctx.closePath();
     ctx.fillStyle = grad;
     ctx.fill();
     segStart = -1;
   }
   function flushLineSeg(end) {
-    if (segStart < 0 || end <= segStart) { segStart = -1; return; }
+    if (segStart < 0 || end <= segStart) {
+      segStart = -1;
+      return;
+    }
     ctx.beginPath();
     for (let i = segStart; i <= end; i++) {
       if (i === segStart) ctx.moveTo(xs[i], yAt(pts[i].nav));
@@ -151,21 +173,21 @@ function drawTrend(canvas, size, trend, selIdx) {
   ctx.textBaseline = 'middle';
   for (let g = 0; g <= 4; g++) {
     const v = max - ((max - min) * g) / 4;
-    const y = padT + (chartH * g) / 4;
-    ctx.fillText(((v / trend.prevNav - 1) * 100).toFixed(2) + '%', padX - 6, y);
+    const y = PAD_T + (chartH * g) / 4;
+    ctx.fillText(((v / trend.prevNav - 1) * 100).toFixed(2) + '%', PAD_X - 6, y);
   }
   ctx.fillStyle = '#6b7280';
-  ctx.fillText('0.00%', padX - 6, yBase);
+  ctx.fillText('0.00%', PAD_X - 6, yBase);
 
   // 底部时间轴
   ctx.textBaseline = 'top';
   ctx.fillStyle = '#8a9099';
   ctx.textAlign = 'left';
-  ctx.fillText('09:30', offsetToX(0), padT + chartH + 4);
+  ctx.fillText('09:30', offsetToX(0), PAD_T + chartH + 4);
   ctx.textAlign = 'center';
-  ctx.fillText('11:30/13:00', offsetToX(120), padT + chartH + 4);
+  ctx.fillText('11:30/13:00', offsetToX(M_AM_E - M_AM_S), PAD_T + chartH + 4);
   ctx.textAlign = 'right';
-  ctx.fillText('15:00', offsetToX(TOTAL_MIN - 1), padT + chartH + 4);
+  ctx.fillText('15:00', offsetToX(TOTAL_MIN - 1), PAD_T + chartH + 4);
 
   // 触摸游标
   if (selIdx >= 0 && selIdx < pts.length && xs[selIdx] !== null) {
@@ -174,8 +196,8 @@ function drawTrend(canvas, size, trend, selIdx) {
     ctx.strokeStyle = '#9aa3ad';
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.moveTo(x, padT);
-    ctx.lineTo(x, padT + chartH);
+    ctx.moveTo(x, PAD_T);
+    ctx.lineTo(x, PAD_T + chartH);
     ctx.stroke();
     ctx.beginPath();
     ctx.arc(x, y, 3.5, 0, Math.PI * 2);
@@ -187,4 +209,4 @@ function drawTrend(canvas, size, trend, selIdx) {
   }
 }
 
-module.exports = { drawTrend: drawTrend };
+module.exports = { drawTrend: drawTrend, hitTest: hitTest };

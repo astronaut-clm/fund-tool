@@ -205,7 +205,6 @@ Page({
       .then((t) => {
         const valid = !!(t && t.points && t.points.length > 1);
         const isCurrent = valid && this.isCurrentData(t.date);
-        this._trendData = t;
 
         if (!isCurrent) {
           this.setData({ trend: null, trendLoaded: true, touchIdx: -1, touchTime: '', touchPct: '', touchCls: '' });
@@ -242,37 +241,9 @@ Page({
     if (!trend || !trend.points || trend.points.length < 2) return;
     const touch = e.touches && e.touches[0];
     if (!touch) return;
-    const pts = trend.points;
-    const padX = 46;
-    const W = this._chartW || 1;
-    const chartW = W - padX - 8;
-    // 按真实交易时间映射（09:30-11:30 / 13:00-15:00）
-    const TOTAL_MIN = 240;
-    function tToMin(t) {
-      const m = String(t).match(/^(\d{1,2}):(\d{2})/);
-      if (!m) return -1;
-      return Number(m[1]) * 60 + Number(m[2]);
-    }
-    function tToOffset(t) {
-      const min = tToMin(t);
-      if (min < 0) return -1;
-      if (min >= 569 && min <= 690) return min - 569;       // 09:30-11:30
-      if (min >= 780 && min <= 900) return 120 + (min - 780); // 13:00-15:00
-      return -1;
-    }
-    const ratio = Math.min(1, Math.max(0, (touch.x - padX) / chartW));
-    const off = ratio * (TOTAL_MIN - 1);
-    let bestIdx = -1;
-    let bestDist = Infinity;
-    for (let i = 0; i < pts.length; i++) {
-      const o = tToOffset(pts[i].t);
-      if (o < 0) continue;
-      const d = Math.abs(o - off);
-      if (d < bestDist) { bestDist = d; bestIdx = i; }
-    }
-    if (bestIdx < 0) return;
-    const idx = bestIdx;
-    const p = pts[idx];
+    const idx = chart.hitTest(trend, touch.x, this._chartW || 1);
+    if (idx < 0) return;
+    const p = trend.points[idx];
     if (this.data.touchIdx === idx) return;
     this.setData({
       touchIdx: idx,
