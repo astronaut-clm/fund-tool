@@ -29,9 +29,10 @@ Page({
       interval: config.pollInterval,
       onlyTrading: true,
       guard: () => !!this.data.fund,
-      onTick: (tick) => {
-        this.load(true);
-        if (tick % 6 === 0) this.loadTrend(); // 分时每 60s 刷一次
+      onTick: () => {
+        const p = this.load(true);
+        p.then(() => this.loadTrend());
+        return p;
       }
     });
     // 先 load 预热缓存，再拉 trend，复用同一实例避免冷启动
@@ -245,8 +246,32 @@ Page({
     const padX = 46;
     const W = this._chartW || 1;
     const chartW = W - padX - 8;
+    // 按真实交易时间映射（09:30-11:30 / 13:00-15:00）
+    const TOTAL_MIN = 240;
+    function tToMin(t) {
+      const m = String(t).match(/^(\d{1,2}):(\d{2})/);
+      if (!m) return -1;
+      return Number(m[1]) * 60 + Number(m[2]);
+    }
+    function tToOffset(t) {
+      const min = tToMin(t);
+      if (min < 0) return -1;
+      if (min >= 569 && min <= 690) return min - 569;       // 09:30-11:30
+      if (min >= 780 && min <= 900) return 120 + (min - 780); // 13:00-15:00
+      return -1;
+    }
     const ratio = Math.min(1, Math.max(0, (touch.x - padX) / chartW));
-    const idx = Math.round(ratio * (pts.length - 1));
+    const off = ratio * (TOTAL_MIN - 1);
+    let bestIdx = -1;
+    let bestDist = Infinity;
+    for (let i = 0; i < pts.length; i++) {
+      const o = tToOffset(pts[i].t);
+      if (o < 0) continue;
+      const d = Math.abs(o - off);
+      if (d < bestDist) { bestDist = d; bestIdx = i; }
+    }
+    if (bestIdx < 0) return;
+    const idx = bestIdx;
     const p = pts[idx];
     if (this.data.touchIdx === idx) return;
     this.setData({

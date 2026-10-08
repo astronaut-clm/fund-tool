@@ -26,11 +26,42 @@ function drawTrend(canvas, size, trend, selIdx) {
   min -= span * 0.12;
   max += span * 0.12;
 
-  // x 轴按索引均布（A 股 241 点与时间压缩映射一致；港股/美股自动适配不错位）
-  const xAtIdx = function (i) {
-    return padX + (chartW * i) / (pts.length - 1);
-  };
   const yAt = function (v) { return padT + chartH * (1 - (v - min) / (max - min)); };
+
+  // 固定时间轴：09:30-11:30/13:00-15:00（下午），午休段空白
+  const SESS = [
+    { s: '09:30', e: '11:30', len: 120 },
+    { s: '13:00', e: '15:00', len: 120 }
+  ];
+  const TOTAL_MIN = 240;
+
+  function tToMin(t) {
+    if (!t) return -1;
+    const m = String(t).match(/^(\d{1,2}):(\d{2})/);
+    if (!m) return -1;
+    return Number(m[1]) * 60 + Number(m[2]);
+  }
+  // 时间 → x 偏移（0..TOTAL_MIN），午休段返回 -1 表示空白
+  function tToOffset(t) {
+    const min = tToMin(t);
+    if (min < 0) return -1;
+    // 09:30-11:30
+    const m0 = tToMin(SESS[0].s);
+    const m1 = tToMin(SESS[0].e);
+    const m2 = tToMin(SESS[1].s);
+    const m3 = tToMin(SESS[1].e);
+    if (min >= m0 && min <= m1) return min - m0;
+    if (min >= m2 && min <= m3) return SESS[0].len + (min - m2);
+    return -1;
+  }
+  function offsetToX(off) {
+    return padX + (chartW * off) / (TOTAL_MIN - 1);
+  }
+  function tToX(t) {
+    const off = tToOffset(t);
+    if (off < 0) return null;
+    return offsetToX(off);
+  }
 
   const lastPct = pts[pts.length - 1].pct;
   const rising = lastPct >= 0;
@@ -57,32 +88,61 @@ function drawTrend(canvas, size, trend, selIdx) {
   ctx.stroke();
   ctx.setLineDash([]);
 
-  // 面积渐变
+  const xs = pts.map(function (p) { return tToX(p.t); });
+
+  // 面积渐变（分段绘制，午休段不连接）
   const grad = ctx.createLinearGradient(0, padT, 0, padT + chartH);
   grad.addColorStop(0, rising ? 'rgba(224,64,63,0.22)' : 'rgba(18,160,92,0.22)');
   grad.addColorStop(1, rising ? 'rgba(224,64,63,0.02)' : 'rgba(18,160,92,0.02)');
-  ctx.beginPath();
-  ctx.moveTo(xAtIdx(0), yAt(pts[0].nav));
-  pts.forEach(function (p, i) {
-    ctx.lineTo(xAtIdx(i), yAt(p.nav));
-  });
-  ctx.lineTo(xAtIdx(pts.length - 1), padT + chartH);
-  ctx.lineTo(xAtIdx(0), padT + chartH);
-  ctx.closePath();
-  ctx.fillStyle = grad;
-  ctx.fill();
 
-  // 折线
-  ctx.beginPath();
-  pts.forEach(function (p, i) {
-    const x = xAtIdx(i);
-    const y = yAt(p.nav);
-    if (i === 0) ctx.moveTo(x, y);
-    else ctx.lineTo(x, y);
-  });
-  ctx.lineWidth = 2;
-  ctx.strokeStyle = mainColor;
-  ctx.stroke();
+  let segStart = -1;
+  function flushAreaSeg(end) {
+    if (segStart < 0 || end <= segStart) { segStart = -1; return; }
+    ctx.beginPath();
+    ctx.moveTo(xs[segStart], yAt(pts[segStart].nav));
+    for (let i = segStart + 1; i <= end; i++) {
+      ctx.lineTo(xs[i], yAt(pts[i].nav));
+    }
+    ctx.lineTo(xs[end], padT + chartH);
+    ctx.lineTo(xs[segStart], padT + chartH);
+    ctx.closePath();
+    ctx.fillStyle = grad;
+    ctx.fill();
+    segStart = -1;
+  }
+  function flushLineSeg(end) {
+    if (segStart < 0 || end <= segStart) { segStart = -1; return; }
+    ctx.beginPath();
+    for (let i = segStart; i <= end; i++) {
+      if (i === segStart) ctx.moveTo(xs[i], yAt(pts[i].nav));
+      else ctx.lineTo(xs[i], yAt(pts[i].nav));
+    }
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = mainColor;
+    ctx.stroke();
+    segStart = -1;
+  }
+
+  // 先面积
+  for (let i = 0; i < pts.length; i++) {
+    if (xs[i] === null) {
+      flushAreaSeg(i - 1);
+    } else if (segStart < 0) {
+      segStart = i;
+    }
+  }
+  flushAreaSeg(pts.length - 1);
+
+  // 再折线
+  segStart = -1;
+  for (let i = 0; i < pts.length; i++) {
+    if (xs[i] === null) {
+      flushLineSeg(i - 1);
+    } else if (segStart < 0) {
+      segStart = i;
+    }
+  }
+  flushLineSeg(pts.length - 1);
 
   // 左侧刻度
   ctx.font = '10px -apple-system, sans-serif';
@@ -97,20 +157,19 @@ function drawTrend(canvas, size, trend, selIdx) {
   ctx.fillStyle = '#6b7280';
   ctx.fillText('0.00%', padX - 6, yBase);
 
-  // 底部时间轴：首/中/尾三点（适配不同市场时段）
+  // 底部时间轴
   ctx.textBaseline = 'top';
   ctx.fillStyle = '#8a9099';
-  const mid = Math.round((pts.length - 1) / 2);
-  const ticks = [pts[0].t, pts[mid].t, pts[pts.length - 1].t];
-  const tickX = [xAtIdx(0), xAtIdx(mid), xAtIdx(pts.length - 1)];
-  ticks.forEach(function (tk, i) {
-    ctx.textAlign = i === 0 ? 'left' : i === ticks.length - 1 ? 'right' : 'center';
-    ctx.fillText(tk, tickX[i], padT + chartH + 4);
-  });
+  ctx.textAlign = 'left';
+  ctx.fillText('09:30', offsetToX(0), padT + chartH + 4);
+  ctx.textAlign = 'center';
+  ctx.fillText('11:30/13:00', offsetToX(120), padT + chartH + 4);
+  ctx.textAlign = 'right';
+  ctx.fillText('15:00', offsetToX(TOTAL_MIN - 1), padT + chartH + 4);
 
   // 触摸游标
-  if (selIdx >= 0 && selIdx < pts.length) {
-    const x = xAtIdx(selIdx);
+  if (selIdx >= 0 && selIdx < pts.length && xs[selIdx] !== null) {
+    const x = xs[selIdx];
     const y = yAt(pts[selIdx].nav);
     ctx.strokeStyle = '#9aa3ad';
     ctx.lineWidth = 1;

@@ -18,26 +18,50 @@ function createPoller(opts) {
 
   let timer = null;
   let tick = 0;
+  let stopped = true;
 
   function stop() {
+    stopped = true;
     if (timer) {
-      clearInterval(timer);
+      clearTimeout(timer);
       timer = null;
     }
     tick = 0;
   }
 
+  function scheduleNext() {
+    if (stopped) return;
+    timer = setTimeout(runOnce, interval);
+  }
+
+  function runOnce() {
+    if (stopped) return;
+    if (onlyTrading) {
+      const util = require('./util');
+      if (!util.isTrading()) {
+        scheduleNext();
+        return;
+      }
+    }
+    if (!guard()) {
+      scheduleNext();
+      return;
+    }
+    tick += 1;
+    let ret;
+    try {
+      ret = onTick(tick);
+    } catch (e) {
+      ret = Promise.reject(e);
+    }
+    // onTick 可返回 Promise；完成后再排下一次，避免堆积
+    Promise.resolve(ret).then(scheduleNext, scheduleNext);
+  }
+
   function start() {
     stop();
-    timer = setInterval(function () {
-      if (onlyTrading) {
-        const util = require('./util');
-        if (!util.isTrading()) return;
-      }
-      if (!guard()) return;
-      tick += 1;
-      onTick(tick);
-    }, interval);
+    stopped = false;
+    scheduleNext();
   }
 
   return {

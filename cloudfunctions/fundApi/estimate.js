@@ -5,13 +5,13 @@ const cache = require('./cache');
 const TTL = {
   info: 24 * 60 * 60 * 1000,
   holdings: 6 * 60 * 60 * 1000,
-  quote: 10 * 1000,
+  quote: 5 * 1000,
   daychg: 30 * 60 * 1000,
-  daychgTrade: 2 * 60 * 60 * 1000,   // 交易时段 09:30–15:00
-  daychgWait: 3 * 60 * 1000,         // 15:00–19:00 等待净值公布
-  daychgHot: 5 * 60 * 1000,          // 19:00–24:00 余热期
-  daychgNight: 30 * 60 * 1000,       // 00:00–09:30 隔夜
-  trend: 60 * 1000,
+  daychgTrade: 2 * 60 * 60 * 1000,
+  daychgWait: 3 * 60 * 1000,
+  daychgHot: 5 * 60 * 1000,
+  daychgNight: 30 * 60 * 1000,
+  trend: 5 * 1000,
   industry: 24 * 60 * 60 * 1000,
   bench: 24 * 60 * 60 * 1000
 };
@@ -389,9 +389,12 @@ async function estimateTrend(code) {
         const points = t.points.map(function (p) {
           return { t: p.t, pct: round(p.pct, 3), nav: round(prevNav * (1 + p.pct / 100), 4) };
         });
-        // 优先用指数介绍（腾讯 introduce），无则用基金投资目标（蛋卷 invest_orientation）
+        // 优先用指数介绍（腾讯），无则用基金投资目标（蛋卷）
         const benchDesc = t.introduce || bench.desc || '';
-        return { prevNav: prevNav, points: points, date: t.date, benchDesc: benchDesc };
+        const result = { prevNav: prevNav, points: points, date: t.date, benchDesc: benchDesc };
+        // 用实时行情修正末点，使走势末值与估算涨幅一致
+        await patchLastPoint(result, [bench.txCode], { isIndex: true });
+        return result;
       }
     }
   }
@@ -461,7 +464,35 @@ async function estimateTrend(code) {
   }
   if (points.length < 2) return null;
 
-  return { prevNav: prevNav, points: points, date: trendDate };
+  // 用实时行情修正末点，使走势末值与估算涨幅一致
+  const result = { prevNav: prevNav, points: points, date: trendDate };
+  const secids = valid.map(function (s) { return s.secid; });
+  await patchLastPoint(result, secids, { isIndex: false, stocks: valid });
+  return result;
+}
+
+async function patchLastPoint(result, fetchKeys, opts) {
+  try {
+    let estPct = null;
+    if (opts.isIndex) {
+      // fetchKeys = [txCode]
+      const q = await em.getIndexQuotes(fetchKeys);
+      const v = q && q[fetchKeys[0]];
+      if (v && Number.isFinite(v.pct)) estPct = v.pct;
+    } else if (opts.stocks && opts.stocks.length) {
+      // fetchKeys = [secid...]
+      const q = await em.getQuotes(fetchKeys);
+      const r = calcByStocks(opts.stocks, q);
+      if (r) estPct = r.estPct;
+    }
+    if (estPct === null || !Number.isFinite(estPct)) return;
+    const pts = result.points;
+    const last = pts[pts.length - 1];
+    last.pct = round(estPct, 3);
+    last.nav = round(result.prevNav * (1 + estPct / 100), 4);
+  } catch (e) {
+    // 失败则保留分时原始末点
+  }
 }
 
 module.exports = { estimateFunds: estimateFunds, estimateTrend: estimateTrend };
