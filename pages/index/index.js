@@ -85,6 +85,9 @@ Page({
 
   onLoad() {
     this.setData({ maxCodeLen: config.maxCodeLen, history: util.getHistory() });
+    if (wx.showShareMenu) {
+      wx.showShareMenu({ menus: ['shareAppMessage'] });
+    }
     this._poller = poller.createPoller({
       interval: config.pollInterval,
       onlyTrading: true,
@@ -125,6 +128,14 @@ Page({
 
   onPullDownRefresh() {
     this.load(true);
+  },
+
+  /** 右上角分享 */
+  onShareAppMessage() {
+    return {
+      title: '投基工具 · 基金估值实时查看',
+      path: '/pages/index/index'
+    };
   },
 
   onPageTap() {
