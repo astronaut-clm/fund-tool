@@ -35,14 +35,15 @@ function normalizeHoldings(input) {
     const it = input[i] || {};
     const code = String(it.code || '').trim();
     const amount = Number(it.amount);
-    if (!code || seen[code] || !Number.isFinite(amount) || amount <= 0) continue;
+    if (!code || seen[code] || !Number.isFinite(amount) || amount < 0) continue;
     const profit = Number(it.profit);
     seen[code] = true;
     out.push({
       code: code,
       name: String(it.name || code),
       amount: amount,
-      profit: Number.isFinite(profit) ? profit : 0
+      profit: Number.isFinite(profit) ? profit : 0,
+      foldDate: /^\d{8}$/.test(String(it.foldDate || '')) ? String(it.foldDate) : ''
     });
   }
   return out;

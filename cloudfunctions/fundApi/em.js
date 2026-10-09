@@ -167,7 +167,7 @@ async function getFundInfo(fcode) {
   };
 }
 
-/** 上一交易日涨跌幅 + 当日单位净值（最新已披露一期及近几期） */
+/** 最近已披露的单位净值、日涨幅及近几期记录 */
 async function getLastDayChange(fcode) {
   if (!isValidFundCode(fcode)) return null;
   const url =
@@ -289,7 +289,6 @@ async function getHoldings(code) {
   const idx = list.findIndex(function (p) { return p.period === cur.period; });
   if (idx >= 0 && idx + 1 < list.length) prev = list[idx + 1];
   if (!prev) {
-
     try {
       // 最新一期是 Q1 时，上一期为上一年年报
       const older = await getHoldingsByYear(code, String(Number(cur.period.slice(0, 4)) - 1));
@@ -311,7 +310,7 @@ async function getHoldings(code) {
     }
   });
 
-  return { period: cur.period, prevPeriod: prev ? prev.period : '', stocks: cur.stocks };
+  return { period: cur.period, stocks: cur.stocks };
 }
 
 /** 个股所属行业（push2 批量，对云 IP 偶发限流，失败返回空 map） */
@@ -361,8 +360,6 @@ function parseTencent(text) {
     const prevClose = Number(f[4]);
     if (!Number.isFinite(price) || price <= 0 || !Number.isFinite(prevClose)) return;
     map[m[1]] = {
-      price: price,
-      prevClose: prevClose,
       pct: Number(f[32]) || 0,
       date: String(f[30] || '').replace(/\D/g, '').slice(0, 8)
     };
@@ -381,8 +378,6 @@ function parseSina(text) {
     const prevClose = Number(f[2]);
     if (!Number.isFinite(price) || price <= 0 || !Number.isFinite(prevClose) || prevClose <= 0) return;
     map[m[1]] = {
-      price: price,
-      prevClose: prevClose,
       pct: Number(((price / prevClose - 1) * 100).toFixed(3)),
       date: String(f[30] || '').replace(/\D/g, '').slice(0, 8)
     };
@@ -476,14 +471,13 @@ async function fetchTrendByTx(tx) {
       if (raw > '1700') return; // 过滤盘后孤立点，保留 16:00-17:00 收盘竞价快照
       points.push({
         t: raw.slice(0, 2) + ':' + raw.slice(2),
-        price: price,
         pct: (price / preClose - 1) * 100
       });
     });
     if (points.length < 2) return null;
 
     // introduce：A 股指数有介绍，港股/美股指数无
-    return { date: String(node.data.date || ''), preClose: preClose, points: points, introduce: String(node.introduce || '') };
+    return { date: String(node.data.date || ''), points: points, introduce: String(node.introduce || '') };
   } catch (e) {
     return null;
   }
@@ -583,16 +577,7 @@ function indexNameCandidates(name) {
   return out;
 }
 
-/** 腾讯代码 → 大写指数代码（sh000300 → SH000300，hkHSTECH → HKHSTECH） */
-function txToIndexSymbol(tx) {
-  const m = String(tx || '').match(/^(sh|sz|hk|us)(.+)$/);
-  if (!m) return String(tx || '').toUpperCase();
-  if (m[1] === 'hk') return 'HK' + m[2];
-  if (m[1] === 'us') return m[2].toUpperCase();
-  return m[1].toUpperCase() + m[2];
-}
-
-/** 腾讯指数联想：按指数名搜，取第一条类型为 ZS 的结果，直接给出可用的 txCode */
+/** 腾讯指数联想：按指数名搜，取第一条类型为 ZS 的结果 */
 async function searchIndexTx(name) {
   const cands = indexNameCandidates(name).slice(0, 2);
   for (let i = 0; i < cands.length; i++) {
@@ -605,21 +590,20 @@ async function searchIndexTx(name) {
       .map(function (s) { return s.split('~'); })
       .filter(function (f) { return f.length >= 5 && f[4] === 'ZS' && /^(sh|sz|hk|us)/.test(f[0]); })[0];
     if (hit) {
-      const tx = hit[0] + hit[1];
-      return { symbol: txToIndexSymbol(tx), txCode: tx };
+      return { txCode: hit[0] + hit[1] };
     }
   }
   return null;
 }
 
-/** 指数名 → {symbol, txCode}：本地别名表 → 腾讯联想 */
+/** 指数名 → 腾讯代码：本地别名表 → 腾讯联想 */
 async function resolveIndexByName(name) {
   const cands = indexNameCandidates(name);
   for (let i = 0; i < cands.length; i++) {
     const symbol = INDEX_ALIAS[cands[i]];
-    if (symbol) return { symbol: symbol, txCode: indexSymbolToTx(symbol) };
+    if (symbol) return { txCode: indexSymbolToTx(symbol) };
   }
-  return await searchIndexTx(name);
+  return searchIndexTx(name);
 }
 
 /** F10 页面有限流：串行化并保证最小请求间隔 */
@@ -644,7 +628,7 @@ function f10Fetch(fcode) {
   return p;
 }
 
-/** 取基本概况表格字段（"跟踪标的"/"基金类型"/"业绩比较基准"） */
+/** 从基本概况表格按表头提取字段（目前用于跟踪标的） */
 function pickTableField(html, label) {
   const m = html.match(new RegExp(label + '\\s*</th>\\s*<td[^>]*>([\\s\\S]*?)</td>'));
   if (!m) return '';
@@ -662,7 +646,7 @@ function pickSection(html, label, endLabel) {
   return (p ? p[1] : seg).replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 300);
 }
 
-/** 天天基金 F10 基本概况 {ftype, target, bench, aim}；target 为空 = 非指数型或未取到 */
+/** F10 跟踪标的和投资目标 */
 async function getFundProfile(fcode) {
   if (!isValidFundCode(fcode)) return null;
   try {
@@ -670,9 +654,7 @@ async function getFundProfile(fcode) {
     if (!html || html.indexOf('基本概况') < 0) return null;
     const target = pickTableField(html, '跟踪标的');
     return {
-      ftype: pickTableField(html, '基金类型'),
       target: target && !/无跟踪标的/.test(target) ? target : '',
-      bench: pickTableField(html, '业绩比较基准'),
       aim: pickSection(html, '投资目标', '投资理念')
     };
   } catch (e) {
@@ -681,7 +663,7 @@ async function getFundProfile(fcode) {
   }
 }
 
-/** F10「跟踪标的」→ 归一化指数名 → 别名表/腾讯联想 → {symbol, name, txCode, desc, source} */
+/** F10「跟踪标的」→ 指数名称与腾讯代码 */
 async function getBenchmarkIndex(fcode) {
   if (!isValidFundCode(fcode)) return null;
 
@@ -692,11 +674,9 @@ async function getBenchmarkIndex(fcode) {
     const hit = await resolveIndexByName(prof.target);
     if (!hit) return null;
     return {
-      symbol: hit.symbol,
       name: prof.target,
       txCode: hit.txCode,
-      desc: prof.aim || '',
-      source: 'f10'
+      desc: prof.aim || ''
     };
   } catch (e) {
     console.warn('[getBenchmarkIndex] failed', fcode, (e && e.message) || e);

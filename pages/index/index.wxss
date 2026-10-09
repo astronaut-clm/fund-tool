@@ -219,7 +219,6 @@
   overflow: hidden;
 }
 
-/* 表头 */
 .tr.th {
   display: flex;
   align-items: center;
@@ -302,7 +301,6 @@
   margin-left: 24rpx;
 }
 
-/* 拖拽手柄 */
 .drag-handle {
   flex-shrink: 0;
   width: 60rpx;
@@ -312,7 +310,6 @@
   margin-left: 12rpx;
 }
 
-/* 编辑模式下拖拽手柄加粗高亮 */
 .fund .drag-handle:active {
   color: #2f6fed;
 }
@@ -352,13 +349,11 @@
   font-weight: 900;
   letter-spacing: 16rpx;
   line-height: 1.2;
-  /* 渐变文字：兼容写法 */
   background: linear-gradient(90deg, #2f6fed 0%, #9b30ff 50%, #e0403f 100%);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
   -webkit-text-fill-color: transparent;
-  /* 轻微发光，增强醒目度 */
   filter: drop-shadow(0 4rpx 12rpx rgba(106, 79, 240, 0.35));
   position: relative;
   padding: 4rpx 32rpx;
@@ -385,7 +380,7 @@
   margin-left: 12rpx;
 }
 
-/* ============ 资产卡 ============ */
+/* 资产卡 */
 .asset {
   margin-top: 16rpx;
   padding: 28rpx 32rpx;
@@ -421,7 +416,7 @@
 .asset-value.down { color: #12a05c; }
 .asset-value.flat { color: #8a9099; }
 
-/* ============ tabs ============ */
+/* 标签栏 */
 .tabs {
   display: flex;
   align-items: center;
@@ -463,7 +458,7 @@
   border-radius: 2rpx;
 }
 
-/* ============ 设置菜单（锚定齿轮左下角） ============ */
+/* 设置菜单（锚定齿轮左下角） */
 .gear-wrap {
   position: relative;
   display: flex;
@@ -520,41 +515,6 @@
   color: #2f6fed;
 }
 
-.menu-icon.add {
-  background: #e6f6ee;
-  color: #12a05c;
-}
-
-/* CSS 画加号，避免 unicode 字符基线不居中 */
-.menu-icon.add .plus {
-  position: relative;
-  width: 28rpx;
-  height: 28rpx;
-}
-
-.menu-icon.add .plus-h,
-.menu-icon.add .plus-v {
-  position: absolute;
-  background: #12a05c;
-  border-radius: 2rpx;
-}
-
-.menu-icon.add .plus-h {
-  left: 0;
-  top: 50%;
-  width: 28rpx;
-  height: 5rpx;
-  margin-top: -2.5rpx;
-}
-
-.menu-icon.add .plus-v {
-  top: 0;
-  left: 50%;
-  width: 5rpx;
-  height: 28rpx;
-  margin-left: -2.5rpx;
-}
-
 .menu-icon.setting {
   background: #f0eafe;
   color: #6a4ff0;
@@ -580,108 +540,6 @@
   white-space: nowrap;
 }
 
-/* ============ 添加持仓弹窗 ============ */
-.modal-mask {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 100;
-  background: rgba(0, 0, 0, 0.45);
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  padding: 15vh 24rpx 0;
-}
-
-.modal {
-  width: 100%;
-  padding: 32rpx 36rpx 24rpx;
-  background: #fff;
-  border-radius: 24rpx;
-  box-sizing: border-box;
-}
-
-.modal-title {
-  font-size: 32rpx;
-  font-weight: 700;
-  color: #1f2329;
-  text-align: center;
-  margin-bottom: 14rpx;
-}
-
-.form-item {
-  display: flex;
-  align-items: center;
-  padding: 18rpx 0;
-  border-bottom: 1rpx solid #f0f1f3;
-  gap: 14rpx;
-}
-
-.form-item:last-of-type {
-  border-bottom: none;
-}
-
-.form-label {
-  flex-shrink: 0;
-  width: 192rpx;
-  font-size: 28rpx;
-  color: #4b5563;
-}
-
-.form-input {
-  flex: 1;
-  font-size: 30rpx;
-  color: #1f2329;
-  height: 52rpx;
-}
-
-.form-input.readonly {
-  color: #8a9099;
-}
-
-.form-name {
-  flex-shrink: 1;
-  font-size: 24rpx;
-  color: #2f6fed;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  margin-left: 8rpx;
-}
-
-.form-name.error {
-  color: #e0403f;
-}
-
-.modal-actions {
-  display: flex;
-  gap: 22rpx;
-  margin-top: 22rpx;
-}
-
-.btn-cancel,
-.btn-save {
-  flex: 1;
-  text-align: center;
-  padding: 18rpx 0;
-  font-size: 28rpx;
-  border-radius: 40rpx;
-}
-
-.btn-cancel {
-  color: #4b5563;
-  background: #f5f6f8;
-}
-
-.btn-save {
-  color: #fff;
-  background: #2f6fed;
-}
-
-/* 持有列表复用自选 */
 .tr.th .num.profit-col {
   flex: 0 0 140rpx;
 }
@@ -690,7 +548,47 @@
   flex: 0 0 140rpx;
 }
 
-/* 持有列表涨幅列固定宽，保证收益列右缘对齐 */
+.holdings-editor-row {
+  flex-wrap: wrap;
+}
+
+.holdings-add-input {
+  box-sizing: border-box;
+  min-width: 0;
+  height: 39rpx;
+  font-size: 30rpx;
+  font-weight: 400;
+}
+
+.holdings-add-default {
+  color: #8a9099;
+}
+
+.holdings-editor-input {
+  box-sizing: border-box;
+  width: 140rpx;
+  min-width: 0;
+  height: 39rpx;
+  padding: 0 4rpx;
+  border-bottom: 1rpx solid #d5e0fb;
+  border-radius: 0;
+  color: #1f2329;
+  background: transparent;
+}
+
+.holdings-editor-error {
+  display: block;
+  flex-basis: 100%;
+  padding: 8rpx 24rpx;
+  font-size: 22rpx;
+  color: #e0403f;
+}
+
+.holdings-editor-row .holdings-editor-error {
+  padding: 8rpx 0;
+}
+
+/* 持有列表第三列固定宽，保证收益列右缘对齐 */
 .tr.th .num.pct-col {
   flex: 0 0 140rpx;
 }

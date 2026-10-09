@@ -162,11 +162,6 @@ function beforeOpen(d) {
   return now.getHours() * 60 + now.getMinutes() < 9 * 60 + 30;
 }
 
-function nowText(d) {
-  const now = d || new Date();
-  return pad2(now.getHours()) + ':' + pad2(now.getMinutes()) + ':' + pad2(now.getSeconds());
-}
-
 /** 千分位 + 2 位小数 */
 function fmtMoney(n) {
   const v = Number(n);
@@ -217,31 +212,6 @@ function setHoldingsSilent(list) {
   return writeHoldings(list, true);
 }
 
-/**
- * 写入/更新一条持仓（保持原位置）。amount<=0 视为删除；
- * foldDate 为已结转收益对应的净值日(YYYYMMDD)，传空则以本次录入为新基准
- */
-function setHolding(code, name, amount, profit, foldDate) {
-  const c = String(code);
-  const a = Number(amount);
-  const p = Number(profit);
-  const item = {
-    code: c,
-    name: name || c,
-    amount: a,
-    profit: Number.isFinite(p) ? p : 0,
-    foldDate: foldDate ? String(foldDate) : ''
-  };
-  let found = false;
-  const next = getHoldings().map(function (h) {
-    if (h.code !== c) return h;
-    found = true;
-    return item;
-  });
-  if (!found && a > 0) next.push(item);
-  return setHoldings(a > 0 ? next : next.filter(function (h) { return h.code !== c; }));
-}
-
 function removeHolding(code) {
   return setHoldings(getHoldings().filter(function (h) { return h.code !== String(code); }));
 }
@@ -281,12 +251,10 @@ module.exports = {
   fmtDataDate,
   isTrading,
   beforeOpen,
-  nowText,
   fmtMoney,
   getHoldings,
   setHoldings,
   setHoldingsSilent,
-  setHolding,
   removeHolding,
   getBackupTs,
   setBackupTs,

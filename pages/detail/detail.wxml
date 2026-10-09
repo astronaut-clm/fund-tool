@@ -1,5 +1,4 @@
 <view class="page">
-  <!-- 估值区 -->
   <view wx:if="{{loading}}" class="loading">加载中…</view>
 
   <view wx:elif="{{fund}}" class="hero card">
@@ -71,7 +70,6 @@
     <text class="chart-empty-sub">当前非交易时段或暂无可用分时数据</text>
   </view>
 
-  <!-- 重仓股票 -->
   <view wx:if="{{rows.length}}" class="table-section">
     <view class="section-head">
       <text class="section-title">重仓股票</text>

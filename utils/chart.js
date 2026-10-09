@@ -4,7 +4,7 @@ const PAD_B = 16;
 const PAD_X = 46;
 const PAD_R = 8;
 
-// 固定时间轴 09:30-11:30 / 13:00-15:00，午休段空白
+// 两段交易时段共 240 分钟，11:30 与 13:00 共用中点坐标
 const TOTAL_MIN = 240;
 const M_AM_S = 9 * 60 + 30;
 const M_AM_E = 11 * 60 + 30;
@@ -31,7 +31,7 @@ function hitTest(trend, x, width) {
   if (!pts || pts.length < 2) return -1;
   const chartW = width - PAD_X - PAD_R;
   if (chartW <= 0) return -1;
-  const off = Math.min(1, Math.max(0, (x - PAD_X) / chartW)) * (TOTAL_MIN - 1);
+  const off = Math.min(1, Math.max(0, (x - PAD_X) / chartW)) * TOTAL_MIN;
   let bestIdx = -1;
   let bestDist = Infinity;
   for (let i = 0; i < pts.length; i++) {
@@ -52,26 +52,31 @@ function drawTrend(canvas, size, trend, selIdx) {
   const dpr = (wx.getWindowInfo && wx.getWindowInfo().pixelRatio) || 2;
   const W = size.width;
   const H = size.height;
-  canvas.width = W * dpr;
-  canvas.height = H * dpr;
-  ctx.scale(dpr, dpr);
+  const pixelW = Math.round(W * dpr);
+  const pixelH = Math.round(H * dpr);
+  if (canvas.width !== pixelW || canvas.height !== pixelH) {
+    canvas.width = pixelW;
+    canvas.height = pixelH;
+  }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, W, H);
 
   const pts = trend.points;
   const chartW = W - PAD_X - PAD_R;
   const chartH = H - PAD_T - PAD_B;
 
-  // y 值域：估算净值 + 上一净值基准
-  const values = pts.map(function (p) { return p.nav; });
-  values.push(trend.prevNav);
-  let min = Math.min.apply(null, values);
-  let max = Math.max.apply(null, values);
+  let min = trend.prevNav;
+  let max = trend.prevNav;
+  pts.forEach(function (p) {
+    if (p.nav < min) min = p.nav;
+    if (p.nav > max) max = p.nav;
+  });
   const span = (max - min) || Math.abs(trend.prevNav) * 0.002;
   min -= span * 0.12;
   max += span * 0.12;
 
   const yAt = function (v) { return PAD_T + chartH * (1 - (v - min) / (max - min)); };
-  const offsetToX = function (off) { return PAD_X + (chartW * off) / (TOTAL_MIN - 1); };
+  const offsetToX = function (off) { return PAD_X + (chartW * off) / TOTAL_MIN; };
   const tToX = function (t) {
     const off = tToOffset(t);
     return off < 0 ? null : offsetToX(off);
@@ -81,7 +86,6 @@ function drawTrend(canvas, size, trend, selIdx) {
   const mainColor = rising ? '#e0403f' : '#12a05c';
 
   ctx.lineWidth = 1;
-  // 网格
   ctx.strokeStyle = '#f0f1f3';
   ctx.beginPath();
   for (let g = 0; g <= 4; g++) {
@@ -103,7 +107,6 @@ function drawTrend(canvas, size, trend, selIdx) {
 
   const xs = pts.map(function (p) { return tToX(p.t); });
 
-  // 面积渐变
   const grad = ctx.createLinearGradient(0, PAD_T, 0, PAD_T + chartH);
   grad.addColorStop(0, rising ? 'rgba(224,64,63,0.22)' : 'rgba(18,160,92,0.22)');
   grad.addColorStop(1, rising ? 'rgba(224,64,63,0.02)' : 'rgba(18,160,92,0.02)');
@@ -142,8 +145,14 @@ function drawTrend(canvas, size, trend, selIdx) {
   }
   function drawSegments(flush) {
     for (let i = 0; i < pts.length; i++) {
-      if (xs[i] === null) flush(i - 1);
-      else if (segStart < 0) segStart = i;
+      if (xs[i] === null) {
+        flush(i - 1);
+      } else {
+        const crossedLunch = i > 0 && segStart >= 0 &&
+          tToMin(pts[i - 1].t) <= M_AM_E && tToMin(pts[i].t) >= M_PM_S;
+        if (crossedLunch) flush(i - 1);
+        if (segStart < 0) segStart = i;
+      }
     }
     flush(pts.length - 1);
     segStart = -1;
@@ -151,7 +160,6 @@ function drawTrend(canvas, size, trend, selIdx) {
   drawSegments(flushAreaSeg);
   drawSegments(flushLineSeg);
 
-  // 左侧刻度
   ctx.font = '10px -apple-system, sans-serif';
   ctx.fillStyle = '#8a9099';
   ctx.textAlign = 'right';
@@ -163,7 +171,6 @@ function drawTrend(canvas, size, trend, selIdx) {
   ctx.fillStyle = '#6b7280';
   ctx.fillText('0.00%', PAD_X - 6, yBase);
 
-  // 底部时间轴
   ctx.textBaseline = 'top';
   ctx.fillStyle = '#8a9099';
   ctx.textAlign = 'left';
@@ -171,7 +178,7 @@ function drawTrend(canvas, size, trend, selIdx) {
   ctx.textAlign = 'center';
   ctx.fillText('11:30/13:00', offsetToX(M_AM_E - M_AM_S), PAD_T + chartH + 4);
   ctx.textAlign = 'right';
-  ctx.fillText('15:00', offsetToX(TOTAL_MIN - 1), PAD_T + chartH + 4);
+  ctx.fillText('15:00', offsetToX(TOTAL_MIN), PAD_T + chartH + 4);
 
   // 触摸游标
   if (selIdx >= 0 && selIdx < pts.length && xs[selIdx] !== null) {
