@@ -364,7 +364,7 @@ function parseTencent(text) {
       price: price,
       prevClose: prevClose,
       pct: Number(f[32]) || 0,
-      date: String(f[30] || '').slice(0, 8)
+      date: String(f[30] || '').replace(/\D/g, '').slice(0, 8)
     };
   });
   return map;

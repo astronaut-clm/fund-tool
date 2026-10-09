@@ -11,9 +11,10 @@ function vibrate(type) {
   wx.vibrateShort({ type: type, fail: function () {} });
 }
 
-/** 净值日字符串 → YYYYMMDD */
+/** 净值/行情日字符串 → YYYYMMDD */
 function navKey(s) {
-  return String(s || '').replace(/\D/g, '').slice(0, 8);
+  const t = String(s || '').replace(/\D/g, '');
+  return t.length >= 8 ? t.slice(0, 8) : '';
 }
 
 /**
@@ -346,12 +347,26 @@ Page({
           util.setHoldings(util.getHoldings().map((h) => updMap[h.code] || h));
         }
 
-        // 表头日期：展示真实涨幅时取其净值日（9:30 前为上一交易日），否则取估算行情日
-        const actualItem = items.find(function (f) { return hasActualPct(f, today); });
-        const dateItem = actualItem || items.find(function (f) { return f.dataDate; });
-        const pctDateText = dateItem
-          ? util.fmtDataDate(actualItem ? actualItem.lastDayDate : dateItem.dataDate)
-          : '';
+        // 表头日期：按列表多数行的展示口径决定（净值日 / 行情日），
+        // 避免某只净值日或行情日滞后的基金（QDII、港股等）单独绑架整个表头
+        let actualCnt = 0;
+        let estCnt = 0;
+        let navMax = '';
+        let quoteMax = '';
+        items.forEach(function (f) {
+          const navDay = navKey(f.lastDayDate);
+          const qDay = navKey(f.dataDate);
+          if (hasActualPct(f, today)) {
+            actualCnt++;
+            if (navDay > navMax) navMax = navDay;
+          } else {
+            estCnt++;
+            if (qDay > quoteMax) quoteMax = qDay;
+          }
+        });
+        const pctDateText = actualCnt > estCnt
+          ? util.fmtDataDate(navMax)
+          : util.fmtDataDate(quoteMax || navMax);
         this.setData({
           funds: funds,
           pctDateText: pctDateText,
