@@ -1,7 +1,22 @@
 .page {
-  padding: 20rpx 24rpx 40rpx;
+  padding: 20rpx 24rpx calc(120rpx + env(safe-area-inset-bottom));
   min-height: 100vh;
   box-sizing: border-box;
+}
+
+/* 底部常驻风险提示 */
+.disclaimer {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 90;
+  padding: 16rpx 24rpx calc(16rpx + env(safe-area-inset-bottom));
+  text-align: center;
+  font-size: 22rpx;
+  color: #8a9099;
+  background: rgba(245, 246, 248, 0.96);
+  border-top: 1rpx solid #eceef1;
 }
 
 .search-bar {
