@@ -3,53 +3,72 @@ const config = require('./config.js');
 const CODES_KEY = 'FUND_CODES';
 const HISTORY_KEY = 'FUND_SEARCH_HISTORY';
 const HOLDINGS_KEY = 'FUND_HOLDINGS';
+const BACKUP_TS_KEY = 'FUND_BACKUP_TS';
+const DIRTY_TS_KEY = 'FUND_LOCAL_DIRTY_TS';
 
-function getCodes() {
+/* ---------- storage 基础 ---------- */
+function readList(key) {
   try {
-    const v = wx.getStorageSync(CODES_KEY);
+    const v = wx.getStorageSync(key);
     return Array.isArray(v) ? v : [];
   } catch (e) {
     return [];
   }
 }
 
-function setCodes(codes) {
-  const list = _normalizeCodes(codes);
-  if (list === null) return [];
+function readTs(key) {
   try {
-    wx.setStorageSync(CODES_KEY, list);
-    touchLocalDirty();
-    return list;
+    return Number(wx.getStorageSync(key)) || 0;
   } catch (e) {
-    return [];
+    return 0;
   }
 }
 
-/** 仅规范化自选数组，不写入 storage。返回 null 表示非数组 */
-function _normalizeCodes(codes) {
+function writeTs(key, ts) {
+  try {
+    wx.setStorageSync(key, Number(ts) || Date.now());
+  } catch (e) {}
+}
+
+/* ---------- 自选 ---------- */
+function getCodes() {
+  return readList(CODES_KEY);
+}
+
+/** 去重规范化自选数组；非数组返回 null */
+function normalizeCodes(codes) {
   if (!Array.isArray(codes)) return null;
   const seen = {};
   const list = [];
-  for (let i = 0; i < codes.length; i++) {
-    const k = String(codes[i]);
+  codes.forEach(function (c) {
+    const k = String(c);
     if (!seen[k]) {
       seen[k] = true;
       list.push(k);
     }
-  }
+  });
   return list;
 }
 
-/** 静默写入（不触发脏标记），用于云端恢复 */
-function setCodesSilent(codes) {
-  const list = _normalizeCodes(codes);
+function writeCodes(codes, silent) {
+  const list = normalizeCodes(codes);
   if (list === null) return [];
   try {
     wx.setStorageSync(CODES_KEY, list);
+    if (!silent) touchLocalDirty();
     return list;
   } catch (e) {
     return [];
   }
+}
+
+function setCodes(codes) {
+  return writeCodes(codes, false);
+}
+
+/** 静默写入（不触发脏标记），用于云端恢复 */
+function setCodesSilent(codes) {
+  return writeCodes(codes, true);
 }
 
 function addCode(code) {
@@ -63,28 +82,18 @@ function addCode(code) {
 }
 
 function removeCode(code) {
-  const list = getCodes().filter(function (c) {
-    return c !== code;
-  });
-  setCodes(list);
-  return list;
+  return setCodes(getCodes().filter(function (c) { return c !== code; }));
 }
 
-/** 搜索历史：最多 maxHistory 条，新的置顶，去重 */
+/* ---------- 搜索历史 ---------- */
 function getHistory() {
-  try {
-    const v = wx.getStorageSync(HISTORY_KEY);
-    return Array.isArray(v) ? v : [];
-  } catch (e) {
-    return [];
-  }
+  return readList(HISTORY_KEY);
 }
 
+/** 新纪录置顶去重，最多 maxHistory 条 */
 function addHistory(code, name) {
   try {
-    const list = getHistory().filter(function (it) {
-      return it.code !== code;
-    });
+    const list = getHistory().filter(function (it) { return it.code !== code; });
     list.unshift({ code: String(code), name: String(name || code) });
     wx.setStorageSync(HISTORY_KEY, list.slice(0, config.maxHistory));
     return list;
@@ -96,12 +105,10 @@ function addHistory(code, name) {
 function clearHistory() {
   try {
     wx.removeStorageSync(HISTORY_KEY);
-  } catch (e) {
-    /* ignore */
-  }
+  } catch (e) {}
 }
 
-/** 涨跌幅格式化：+1.23% */
+/* ---------- 格式化 ---------- */
 function fmtPct(n) {
   if (n === null || n === undefined || n === '' || isNaN(n)) return '--';
   const v = Number(n);
@@ -114,14 +121,11 @@ function fmtNav(n) {
   return Number(n).toFixed(4);
 }
 
-/** 日期格式化：YYYY-MM-DD → MM-DD */
 function fmtDate(s) {
-  const t = String(s || '');
-  const m = t.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  const m = String(s || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
   return m ? m[2] + '-' + m[3] : '';
 }
 
-/** 涨跌方向样式 class */
 function clsOf(n) {
   const v = Number(n);
   if (n === null || n === undefined || isNaN(v) || Math.abs(v) < 0.005) return 'flat';
@@ -133,26 +137,29 @@ function pad2(n) {
   return (v < 10 ? '0' : '') + v;
 }
 
-/** 今天 YYYYMMDD（与服务端日期比对） */
 function todayStr(d) {
   const now = d || new Date();
   return '' + now.getFullYear() + pad2(now.getMonth() + 1) + pad2(now.getDate());
 }
 
-/** 把服务端返回的行情日期（YYYY-MM-DD 或 YYYYMMDD）规范为 MM-DD */
+/** 行情日期（YYYY-MM-DD / YYYYMMDD）→ MM-DD */
 function fmtDataDate(s) {
   const t = String(s || '').replace(/\D/g, '');
-  if (t.length < 8) return '';
-  return t.slice(4, 6) + '-' + t.slice(6, 8);
+  return t.length >= 8 ? t.slice(4, 6) + '-' + t.slice(6, 8) : '';
 }
 
-/** A股交易时段：9:30-11:30 / 13:00-15:00 */
+/** A股交易时段 9:30-11:30 / 13:00-15:00 */
 function isTrading(d) {
   const now = d || new Date();
-  const day = now.getDay();
-  if (day === 0 || day === 6) return false;
+  if (now.getDay() === 0 || now.getDay() === 6) return false;
   const t = now.getHours() * 60 + now.getMinutes();
   return (t >= 9 * 60 + 30 && t <= 11 * 60 + 30) || (t >= 13 * 60 && t <= 15 * 60);
+}
+
+/** 9:30 开盘前：当日行情尚未开始 */
+function beforeOpen(d) {
+  const now = d || new Date();
+  return now.getHours() * 60 + now.getMinutes() < 9 * 60 + 30;
 }
 
 function nowText(d) {
@@ -160,60 +167,59 @@ function nowText(d) {
   return pad2(now.getHours()) + ':' + pad2(now.getMinutes()) + ':' + pad2(now.getSeconds());
 }
 
-/* ============ 持仓存储 ============ */
+/** 千分位 + 2 位小数 */
+function fmtMoney(n) {
+  const v = Number(n);
+  if (!Number.isFinite(v)) return '--';
+  const neg = v < 0;
+  const parts = Math.abs(v).toFixed(2).split('.');
+  parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  return (neg ? '-' : '') + parts.join('.');
+}
 
+/* ---------- 持仓 ---------- */
 function getHoldings() {
+  return readList(HOLDINGS_KEY);
+}
+
+/** 按 code 去重规范化持仓数组；非数组返回 null */
+function normalizeHoldings(list) {
+  if (!Array.isArray(list)) return null;
+  const seen = {};
+  const arr = [];
+  list.forEach(function (it) {
+    const k = it && String(it.code);
+    if (!k || seen[k]) return;
+    seen[k] = true;
+    arr.push(it);
+  });
+  return arr;
+}
+
+function writeHoldings(list, silent) {
+  const arr = normalizeHoldings(list);
+  if (arr === null) return [];
   try {
-    const v = wx.getStorageSync(HOLDINGS_KEY);
-    return Array.isArray(v) ? v : [];
+    wx.setStorageSync(HOLDINGS_KEY, arr);
+    if (!silent) touchLocalDirty();
+    return arr;
   } catch (e) {
     return [];
   }
 }
 
 function setHoldings(list) {
-  const arr = _normalizeHoldings(list);
-  if (arr === null) return [];
-  try {
-    wx.setStorageSync(HOLDINGS_KEY, arr);
-    touchLocalDirty();
-    return arr;
-  } catch (e) {
-    return [];
-  }
-}
-
-/** 仅规范化持仓数组，不写入 storage。返回 null 表示非数组 */
-function _normalizeHoldings(list) {
-  if (!Array.isArray(list)) return null;
-  const seen = {};
-  const arr = [];
-  for (let i = 0; i < list.length; i++) {
-    const it = list[i];
-    if (!it || !it.code) continue;
-    const k = String(it.code);
-    if (seen[k]) continue;
-    seen[k] = true;
-    arr.push(it);
-  }
-  return arr;
+  return writeHoldings(list, false);
 }
 
 /** 静默写入（不触发脏标记），用于云端恢复 */
 function setHoldingsSilent(list) {
-  const arr = _normalizeHoldings(list);
-  if (arr === null) return [];
-  try {
-    wx.setStorageSync(HOLDINGS_KEY, arr);
-    return arr;
-  } catch (e) {
-    return [];
-  }
+  return writeHoldings(list, true);
 }
 
 /**
- * 写入/更新一条持仓（保持原有位置，不挪到末尾）。amount<=0 视为删除
- * foldDate：持有收益/持有金额对应的净值日(YYYYMMDD)；传空表示以本次录入值为新基准，不再补结转
+ * 写入/更新一条持仓（保持原位置）。amount<=0 视为删除；
+ * foldDate 为已结转收益对应的净值日(YYYYMMDD)，传空则以本次录入为新基准
  */
 function setHolding(code, name, amount, profit, foldDate) {
   const c = String(code);
@@ -226,9 +232,8 @@ function setHolding(code, name, amount, profit, foldDate) {
     profit: Number.isFinite(p) ? p : 0,
     foldDate: foldDate ? String(foldDate) : ''
   };
-  const list = getHoldings();
   let found = false;
-  const next = list.map(function (h) {
+  const next = getHoldings().map(function (h) {
     if (h.code !== c) return h;
     found = true;
     return item;
@@ -238,83 +243,53 @@ function setHolding(code, name, amount, profit, foldDate) {
 }
 
 function removeHolding(code) {
-  const list = getHoldings().filter(function (h) { return h.code !== String(code); });
-  return setHoldings(list);
+  return setHoldings(getHoldings().filter(function (h) { return h.code !== String(code); }));
 }
 
-/** 金额格式化：千分位 + 2 位小数，负数带 - */
-function fmtMoney(n) {
-  const v = Number(n);
-  if (!Number.isFinite(v)) return '--';
-  const neg = v < 0;
-  const abs = Math.abs(v).toFixed(2);
-  const parts = abs.split('.');
-  parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-  return (neg ? '-' : '') + parts.join('.');
-}
-
-/** 上次同步时间 */
-const BACKUP_TS_KEY = 'FUND_BACKUP_TS';
-/** 本地数据最后修改时间 */
-const LOCAL_DIRTY_TS_KEY = 'FUND_LOCAL_DIRTY_TS';
-
+/* ---------- 同步时间戳 ---------- */
 function getBackupTs() {
-  try {
-    return Number(wx.getStorageSync(BACKUP_TS_KEY)) || 0;
-  } catch (e) {
-    return 0;
-  }
+  return readTs(BACKUP_TS_KEY);
 }
 
 function setBackupTs(ts) {
-  try {
-    wx.setStorageSync(BACKUP_TS_KEY, Number(ts) || Date.now());
-  } catch (e) {
-    /* ignore */
-  }
+  writeTs(BACKUP_TS_KEY, ts);
 }
 
+/** 本地数据最后修改时间 */
 function getLocalDirtyTs() {
-  try {
-    return Number(wx.getStorageSync(LOCAL_DIRTY_TS_KEY)) || 0;
-  } catch (e) {
-    return 0;
-  }
+  return readTs(DIRTY_TS_KEY);
 }
 
 function touchLocalDirty(ts) {
-  try {
-    wx.setStorageSync(LOCAL_DIRTY_TS_KEY, Number(ts) || Date.now());
-  } catch (e) {
-    /* ignore */
-  }
+  writeTs(DIRTY_TS_KEY, ts);
 }
 
 module.exports = {
-  getCodes: getCodes,
-  setCodes: setCodes,
-  setCodesSilent: setCodesSilent,
-  addCode: addCode,
-  removeCode: removeCode,
-  getHistory: getHistory,
-  addHistory: addHistory,
-  clearHistory: clearHistory,
-  fmtPct: fmtPct,
-  fmtNav: fmtNav,
-  fmtDate: fmtDate,
-  clsOf: clsOf,
-  todayStr: todayStr,
-  fmtDataDate: fmtDataDate,
-  isTrading: isTrading,
-  nowText: nowText,
-  getHoldings: getHoldings,
-  setHoldings: setHoldings,
-  setHoldingsSilent: setHoldingsSilent,
-  setHolding: setHolding,
-  removeHolding: removeHolding,
-  fmtMoney: fmtMoney,
-  getBackupTs: getBackupTs,
-  setBackupTs: setBackupTs,
-  getLocalDirtyTs: getLocalDirtyTs,
-  touchLocalDirty: touchLocalDirty
+  getCodes,
+  setCodes,
+  setCodesSilent,
+  addCode,
+  removeCode,
+  getHistory,
+  addHistory,
+  clearHistory,
+  fmtPct,
+  fmtNav,
+  fmtDate,
+  clsOf,
+  todayStr,
+  fmtDataDate,
+  isTrading,
+  beforeOpen,
+  nowText,
+  fmtMoney,
+  getHoldings,
+  setHoldings,
+  setHoldingsSilent,
+  setHolding,
+  removeHolding,
+  getBackupTs,
+  setBackupTs,
+  getLocalDirtyTs,
+  touchLocalDirty
 };

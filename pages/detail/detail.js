@@ -4,6 +4,28 @@ const poller = require('../../utils/poller.js');
 const chart = require('../../utils/chart.js');
 const config = require('../../utils/config.js');
 
+/** 日期串 → YYYYMMDD */
+function dateKey(s) {
+  return String(s || '').replace(/\D/g, '').slice(0, 8);
+}
+
+/**
+ * hero 展示的涨幅与日期：9:30 前行情已翻到今日（估算恒为 0/集合竞价噪声）
+ * 但尚未开盘时，回退到已公布的上一净值日，保持上一交易日状态
+ */
+function heroEstimate(f) {
+  const quoteDay = dateKey(f.dataDate);
+  const navDay = dateKey(f.lastDayDate);
+  if (
+    util.beforeOpen() &&
+    quoteDay && navDay && navDay < quoteDay &&
+    f.lastDayPct !== null && f.lastDayPct !== undefined
+  ) {
+    return { pct: f.lastDayPct, date: f.lastDayDate };
+  }
+  return { pct: f.estPct, date: f.dataDate };
+}
+
 Page({
   data: {
     code: '',
@@ -23,8 +45,7 @@ Page({
   },
 
   onLoad(options) {
-    const code = options.code || '';
-    this.setData({ code: code });
+    this.setData({ code: options.code || '' });
     this._poller = poller.createPoller({
       interval: config.pollInterval,
       onlyTrading: true,
@@ -35,16 +56,14 @@ Page({
         return p;
       }
     });
+
     // 先 load 预热缓存，再拉 trend，复用同一实例避免冷启动
     this.load(true).then(() => this.loadTrend());
   },
 
   onShow() {
-    // 从首页返回时同步自选状态
     const code = this.data.code;
-    if (code) {
-      this.setData({ inWatchlist: util.getCodes().indexOf(code) >= 0 });
-    }
+    if (code) this.setData({ inWatchlist: util.getCodes().indexOf(code) >= 0 });
     if (this._poller) this._poller.start();
   },
 
@@ -73,7 +92,9 @@ Page({
           this.setData({ loading: false, fund: null });
           return;
         }
+        const hero = heroEstimate(f);
         const rows = (f.stocks || []).map((s) => {
+
           // 较上期：新增 / 变动百分点
           let deltaText = '';
           let deltaArrow = '';
@@ -107,12 +128,9 @@ Page({
           };
         });
 
-        const today = util.fmtDataDate(f.dataDate);
+        // 轮询：只更新会变的字段，名称/类型/规模不动
+        if (this._fullLoaded) {
 
-        const isPolling = !!this._fullLoaded;
-
-        if (isPolling) {
-          // 轮询：只更新会变的字段，名称/类型/规模不动
           const patch = {};
           const oldFund = this.data.fund || {};
           if (f.holdingsPeriod && f.holdingsPeriod !== oldFund.periodText) {
@@ -128,12 +146,12 @@ Page({
             patch['fund.lastDayDate'] = util.fmtDate(f.lastDayDate);
           }
           if (f.msg !== oldFund.msg) patch['fund.msg'] = f.msg;
-          const estPctText = util.fmtPct(f.estPct);
-          const estCls = util.clsOf(f.estPct);
+          const estPctText = util.fmtPct(hero.pct);
+          const estCls = util.clsOf(hero.pct);
           if (estPctText !== oldFund.pctText) patch['fund.pctText'] = estPctText;
           if (estCls !== oldFund.cls) patch['fund.cls'] = estCls;
-          patch['fund.hasPct'] = f.estPct !== null && f.estPct !== undefined;
-          const newToday = util.fmtDataDate(f.dataDate);
+          patch['fund.hasPct'] = hero.pct !== null && hero.pct !== undefined;
+          const newToday = util.fmtDataDate(hero.date);
           if (newToday && newToday !== this.data.today) patch['today'] = newToday;
           patch['lastTime'] = util.nowText();
 
@@ -141,18 +159,14 @@ Page({
           const oldRows = this.data.rows || [];
           for (let i = 0; i < rows.length; i++) {
             if (!oldRows[i]) break;
-            if (rows[i].pctText !== oldRows[i].pctText) {
-              patch['rows[' + i + '].pctText'] = rows[i].pctText;
-            }
-            if (rows[i].cls !== oldRows[i].cls) {
-              patch['rows[' + i + '].cls'] = rows[i].cls;
-            }
+            if (rows[i].pctText !== oldRows[i].pctText) patch['rows[' + i + '].pctText'] = rows[i].pctText;
+            if (rows[i].cls !== oldRows[i].cls) patch['rows[' + i + '].cls'] = rows[i].cls;
           }
           this.setData(patch);
         } else {
           this.setData({
             loading: false,
-            today: today,
+            today: util.fmtDataDate(hero.date),
             fund: {
               code: f.code,
               name: f.name,
@@ -160,24 +174,20 @@ Page({
               sizeText: f.size ? (f.size / 100000000).toFixed(2) + ' 亿' : '',
               prevNavText: util.fmtNav(f.prevNav),
               prevNavDate: util.fmtDate(f.navDate),
-              pctText: util.fmtPct(f.estPct),
-              cls: util.clsOf(f.estPct),
+              pctText: util.fmtPct(hero.pct),
+              cls: util.clsOf(hero.pct),
               isBond: /债|纯债|信用|利率/.test(String(f.ftype || '')),
               coverageText: f.source === 'index'
                 ? (f.bench && f.bench.name ? '跟踪指数 ' + f.bench.name : '跟踪指数')
                 : (f.coverage ? '总占比 ' + f.coverage + '%' : ''),
-              benchText: f.source === 'index' && f.bench && f.bench.name
-                ? '跟踪 ' + f.bench.name
-                : '',
-              benchDesc: f.source === 'index' && f.bench && f.bench.desc
-                ? f.bench.desc
-                : '',
+              benchText: f.source === 'index' && f.bench && f.bench.name ? '跟踪 ' + f.bench.name : '',
+              benchDesc: f.source === 'index' && f.bench && f.bench.desc ? f.bench.desc : '',
               periodText: f.holdingsPeriod || '未披露',
               lastDayPctText: util.fmtPct(f.lastDayPct),
               lastDayCls: util.clsOf(f.lastDayPct),
               lastDayDate: util.fmtDate(f.lastDayDate),
               msg: f.msg || '',
-              hasPct: f.estPct !== null && f.estPct !== undefined
+              hasPct: hero.pct !== null && hero.pct !== undefined
             },
             rows: rows,
             lastTime: util.nowText(),
@@ -195,8 +205,7 @@ Page({
       });
   },
 
-  /** 当日分时走势 */
-
+  /* ---------- 当日分时走势 ---------- */
   loadTrend() {
     const code = this.data.code;
     if (!code) return Promise.resolve();
@@ -204,19 +213,24 @@ Page({
       .trend(code)
       .then((t) => {
         const valid = !!(t && t.points && t.points.length > 1);
-        const isCurrent = valid && this.isCurrentData(t.date);
-
-        if (!isCurrent) {
+        if (!valid || !this.isCurrentData(t.date)) {
           this.setData({ trend: null, trendLoaded: true, touchIdx: -1, touchTime: '', touchPct: '', touchCls: '' });
-        } else {
-          // 日期 YYYYMMDD → MM-DD
-          const d = String(t.date || '').replace(/\D/g, '').slice(0, 8);
-          const trendDateText = d.length === 8 ? d.slice(4, 6) + '-' + d.slice(6, 8) : '';
-          const benchDesc = t.benchDesc || this.data.fund.benchDesc || '';
-          this.setData({ trend: t, trendDateText: trendDateText, 'fund.benchDesc': benchDesc, trendLoaded: true, touchIdx: -1, touchTime: '', touchPct: '', touchCls: '' }, () => {
-            this.drawChart(-1);
-          });
+          return;
         }
+        const d = String(t.date || '').replace(/\D/g, '').slice(0, 8);
+        this.setData(
+          {
+            trend: t,
+            trendDateText: d.length === 8 ? d.slice(4, 6) + '-' + d.slice(6, 8) : '',
+            'fund.benchDesc': t.benchDesc || this.data.fund.benchDesc || '',
+            trendLoaded: true,
+            touchIdx: -1,
+            touchTime: '',
+            touchPct: '',
+            touchCls: ''
+          },
+          () => this.drawChart(-1)
+        );
       })
       .catch(() => {
         this.setData({ trend: null, trendLoaded: true });
@@ -225,15 +239,10 @@ Page({
 
   isCurrentData(date) {
     const now = new Date();
-    const today = util.todayStr(now);
     const d = String(date || '').replace(/\D/g, '').slice(0, 8);
-    const nowMin = now.getHours() * 60 + now.getMinutes();
-    if (!d) {
-      if (util.isTrading(now)) return true;
-      return nowMin < 9 * 60 + 30;
-    }
-    if (d === today) return true;
-    return nowMin < 9 * 60 + 30;
+    const beforeOpen = now.getHours() * 60 + now.getMinutes() < 9 * 60 + 30;
+    if (!d) return util.isTrading(now) || beforeOpen;
+    return d === util.todayStr(now) || beforeOpen;
   },
 
   onTouchChart(e) {
@@ -263,31 +272,31 @@ Page({
   drawChart(selIdx) {
     const trend = this.data.trend;
     if (!trend || !trend.points || trend.points.length < 2) return;
-    const size = { width: this._chartW, height: this._chartH };
     if (this._canvas && this._chartW && this._chartH) {
-      chart.drawTrend(this._canvas, size, trend, selIdx);
-    } else {
-      wx.createSelectorQuery()
-        .in(this)
-        .select('#trendCanvas')
-        .fields({ node: true, size: true })
-        .exec((res) => {
-          const item = res && res[0];
-          if (!item || !item.node) {
-            // 节点未就绪（首绘常见），延一帧重试
-            if (this._drawRetry < 3) {
-              this._drawRetry = (this._drawRetry || 0) + 1;
-              setTimeout(() => this.drawChart(selIdx), 30);
-            }
-            return;
-          }
-          this._drawRetry = 0;
-          this._canvas = item.node;
-          this._chartW = item.width;
-          this._chartH = item.height;
-          chart.drawTrend(item.node, { width: item.width, height: item.height }, trend, selIdx);
-        });
+      chart.drawTrend(this._canvas, { width: this._chartW, height: this._chartH }, trend, selIdx);
+      return;
     }
+    wx.createSelectorQuery()
+      .in(this)
+      .select('#trendCanvas')
+      .fields({ node: true, size: true })
+      .exec((res) => {
+        const item = res && res[0];
+        // 节点未就绪（首绘常见），延一帧重试
+        if (!item || !item.node) {
+
+          if (this._drawRetry < 3) {
+            this._drawRetry = (this._drawRetry || 0) + 1;
+            setTimeout(() => this.drawChart(selIdx), 30);
+          }
+          return;
+        }
+        this._drawRetry = 0;
+        this._canvas = item.node;
+        this._chartW = item.width;
+        this._chartH = item.height;
+        chart.drawTrend(item.node, { width: item.width, height: item.height }, trend, selIdx);
+      });
   },
 
   /** 自选切换 */
@@ -295,10 +304,9 @@ Page({
     const code = this.data.code;
     if (this.data.inWatchlist) {
       util.removeCode(code);
-      this.setData({ inWatchlist: false });
     } else {
       util.addCode(code);
-      this.setData({ inWatchlist: true });
     }
+    this.setData({ inWatchlist: !this.data.inWatchlist });
   }
 });

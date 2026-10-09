@@ -77,9 +77,7 @@ function stripJsonp(text) {
   if (s > 0 && e > s) {
     try {
       return JSON.parse(t.slice(s + 1, e));
-    } catch (err) {
-      /* fallthrough */
-    }
+    } catch (err) {}
   }
   return JSON.parse(t);
 }
@@ -120,7 +118,7 @@ async function searchFund(key) {
       };
     })
     .filter(function (it) {
-      return FUND_TYPE_RE.test(it.type);
+      return it && FUND_TYPE_RE.test(it.type);
     });
 
   // 6 位数字（基金代码）时精确查并置顶（联想接口对代码片段匹配不准）
@@ -129,16 +127,13 @@ async function searchFund(key) {
       const info = await getFundInfo(k);
       if (info) {
         const exist = items.findIndex(function (it) { return it.code === k; });
-        const exact = { code: info.code, name: info.name, type: info.ftype };
         if (exist >= 0) items.splice(exist, 1);
-        items.unshift(exact);
+        items.unshift({ code: info.code, name: info.name, type: info.ftype });
       }
-    } catch (e) {
-      /* 忽略 */
-    }
+    } catch (e) {}
   }
 
-  // 重排序：代码匹配优先，名称匹配其次
+  // 代码匹配优先，名称匹配其次
   const score = function (it) {
     if (it.code === k) return 0;
     if (it.code.indexOf(k) === 0) return 1;
@@ -172,7 +167,7 @@ async function getFundInfo(fcode) {
   };
 }
 
-/** 上一交易日涨跌幅 + 当日单位净值（取最新已披露一期） */
+/** 上一交易日涨跌幅 + 当日单位净值（最新已披露一期及近几期） */
 async function getLastDayChange(fcode) {
   if (!isValidFundCode(fcode)) return null;
   const url =
@@ -197,7 +192,7 @@ async function getLastDayChange(fcode) {
   return { date: days[0].date, pct: days[0].pct, nav: days[0].nav, days: days };
 }
 
-/** 解析 jjcc 持仓表格（可能含多个报告期），返回按报告期倒序 */
+/** 解析 jjcc 持仓表格（可能含多个报告期），按报告期倒序 */
 function parseJjcc(html) {
   const segs = String(html).split(/<h4[^>]*>/i).slice(1);
   const out = [];
@@ -221,6 +216,7 @@ function parseJjcc(html) {
       }
       if (tds.length < 3) continue;
 
+      // 定位代码列与占比列（各表列序不固定）
       let codeIdx = -1;
       for (let k = 0; k < tds.length; k++) {
         if (/^\d{6}$/.test(tds[k]) || /^[A-Za-z]{1,5}$/.test(tds[k]) || /^\d{5}$/.test(tds[k])) {
@@ -237,11 +233,10 @@ function parseJjcc(html) {
       }
       if (codeIdx < 0 || ratioIdx < 0) continue;
 
-      const stockCode = tds[codeIdx];
       stocks.push({
-        code: stockCode,
-        secid: toSecid(stockCode),
-        name: tds[codeIdx + 1] || stockCode,
+        code: tds[codeIdx],
+        secid: toSecid(tds[codeIdx]),
+        name: tds[codeIdx + 1] || tds[codeIdx],
         weight: parseFloat(tds[ratioIdx]) / 100
       });
       if (stocks.length >= 10) break;
@@ -287,22 +282,19 @@ async function getHoldings(code) {
     try {
       const sameYear = await getHoldingsByYear(code, cur.period.slice(0, 4));
       if (sameYear.length > list.length) list = sameYear;
-    } catch (e) {
-      /* 降级 */
-    }
+    } catch (e) {}
   }
 
   let prev = null;
   const idx = list.findIndex(function (p) { return p.period === cur.period; });
   if (idx >= 0 && idx + 1 < list.length) prev = list[idx + 1];
   if (!prev) {
-    // 最新一期是 Q1 时，上一期为上一年年报
+
     try {
+      // 最新一期是 Q1 时，上一期为上一年年报
       const older = await getHoldingsByYear(code, String(Number(cur.period.slice(0, 4)) - 1));
       if (older.length) prev = older[0];
-    } catch (e) {
-      /* 降级 */
-    }
+    } catch (e) {}
   }
 
   const prevMap = {};
@@ -357,7 +349,7 @@ function toTxCode(secid) {
   return null;
 }
 
-/** 解析腾讯行情（`~` 分隔） */
+/** 解析腾讯行情（~ 分隔） */
 function parseTencent(text) {
   const map = {};
   String(text || '').split(';').forEach(function (line) {
@@ -368,8 +360,12 @@ function parseTencent(text) {
     const price = Number(f[3]);
     const prevClose = Number(f[4]);
     if (!Number.isFinite(price) || price <= 0 || !Number.isFinite(prevClose)) return;
-    const date = String(f[30] || '').slice(0, 8);
-    map[m[1]] = { price: price, prevClose: prevClose, pct: Number(f[32]) || 0, date: date };
+    map[m[1]] = {
+      price: price,
+      prevClose: prevClose,
+      pct: Number(f[32]) || 0,
+      date: String(f[30] || '').slice(0, 8)
+    };
   });
   return map;
 }
@@ -384,12 +380,11 @@ function parseSina(text) {
     const price = Number(f[3]);
     const prevClose = Number(f[2]);
     if (!Number.isFinite(price) || price <= 0 || !Number.isFinite(prevClose) || prevClose <= 0) return;
-    const date = String(f[30] || '').replace(/\D/g, '').slice(0, 8);
     map[m[1]] = {
       price: price,
       prevClose: prevClose,
       pct: Number(((price / prevClose - 1) * 100).toFixed(3)),
-      date: date
+      date: String(f[30] || '').replace(/\D/g, '').slice(0, 8)
     };
   });
   return map;
@@ -408,45 +403,37 @@ async function fetchBySource(source, codes) {
 async function getQuotes(secids) {
   if (!secids || !secids.length) return {};
 
-  const codes = secids.map(toTxCode).filter(Boolean);
-  if (!codes.length) return {};
-
   const secidToTx = {};
   secids.forEach(function (secid) {
     const tx = toTxCode(secid);
     if (tx) secidToTx[secid] = tx;
   });
+  const codes = Object.keys(secidToTx).map(function (secid) { return secidToTx[secid]; });
+  if (!codes.length) return {};
 
   const result = {};
-
-  const txBatches = chunk(codes, BATCH);
   await Promise.all(
-    txBatches.map(async function (batch) {
+    chunk(codes, BATCH).map(async function (batch) {
       try {
         const parsed = await fetchBySource('tencent', batch);
         batch.forEach(function (c) {
           if (parsed[c]) result[c] = parsed[c];
         });
-      } catch (e) {
-        /* 走兜底 */
-      }
+      } catch (e) {}
     })
   );
 
   // 新浪只补腾讯缺失的
   const missing = codes.filter(function (c) { return !result[c]; });
   if (missing.length) {
-    const sinaBatches = chunk(missing, BATCH);
     await Promise.all(
-      sinaBatches.map(async function (batch) {
+      chunk(missing, BATCH).map(async function (batch) {
         try {
           const parsed = await fetchBySource('sina', batch);
           batch.forEach(function (c) {
             if (parsed[c]) result[c] = parsed[c];
           });
-        } catch (e) {
-          /* 放弃该批 */
-        }
+        } catch (e) {}
       })
     );
   }
@@ -494,9 +481,9 @@ async function fetchTrendByTx(tx) {
       });
     });
     if (points.length < 2) return null;
-    const date = String((node.data.date || '') + '');
-    const introduce = String(node.introduce || ''); // A 股指数有介绍，港股/美股指数无
-    return { date: date, preClose: preClose, points: points, introduce: introduce };
+
+    // introduce：A 股指数有介绍，港股/美股指数无
+    return { date: String(node.data.date || ''), preClose: preClose, points: points, introduce: String(node.introduce || '') };
   } catch (e) {
     return null;
   }
@@ -520,7 +507,7 @@ function indexSymbolToTx(symbol) {
   return US_TX_MAP[s] || ''; // CSI* 等腾讯无行情
 }
 
-/** 本地别名表：指数名 → 指数代码 */
+/** 指数名 → 指数代码 */
 const INDEX_ALIAS = {
   沪深300: 'SH000300',
   中证100: 'SH000903',
@@ -574,7 +561,7 @@ const INDEX_ALIAS = {
   德国DAX: 'GDAXI'
 };
 
-/** 指数名候选：去括号、去"指数"后缀、逐个剥离"人民币/全收益/收益率"等尾缀 */
+/** 指数名候选：去括号、去"指数"后缀、逐个剥离"人民币/全收益"等尾缀 */
 function indexNameCandidates(name) {
   const s = String(name || '').replace(/\s/g, '').replace(/[（(][^）)]*[）)]/g, '');
   const SUFFIX = /(?:指数|收益率|全收益|总收益|净收益|价格|人民币计价|美元计价|人民币|美元|RMB|USD)+$/i;
@@ -635,7 +622,7 @@ async function resolveIndexByName(name) {
   return await searchIndexTx(name);
 }
 
-/** 天天基金 F10 页面有限流，串行化并保证最小请求间隔 */
+/** F10 页面有限流：串行化并保证最小请求间隔 */
 const F10_GAP = 250;
 let _f10Chain = Promise.resolve();
 let _f10Last = 0;
@@ -672,14 +659,10 @@ function pickSection(html, label, endLabel) {
   const j = endLabel ? seg.indexOf(endLabel) : -1;
   seg = j >= 0 ? seg.slice(0, j) : seg.slice(0, 2000);
   const p = seg.match(/<p>([\s\S]*?)<\/p>/);
-  const txt = (p ? p[1] : seg).replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
-  return txt.slice(0, 300);
+  return (p ? p[1] : seg).replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 300);
 }
 
-/**
- * 天天基金 F10 基本概况
- * {ftype, target, bench, aim}；target 为空 = 无跟踪标的（非指数型）或页面未取到
- */
+/** 天天基金 F10 基本概况 {ftype, target, bench, aim}；target 为空 = 非指数型或未取到 */
 async function getFundProfile(fcode) {
   if (!isValidFundCode(fcode)) return null;
   try {
@@ -698,16 +681,12 @@ async function getFundProfile(fcode) {
   }
 }
 
-/**
- * 天天基金 F10「跟踪标的」→ 归一化指数名 → 本地别名表 → 腾讯联想
- * 返回 {symbol, name, txCode, desc, source}，txCode 为空则腾讯无此指数行情
- */
+/** F10「跟踪标的」→ 归一化指数名 → 别名表/腾讯联想 → {symbol, name, txCode, desc, source} */
 async function getBenchmarkIndex(fcode) {
   if (!isValidFundCode(fcode)) return null;
 
   try {
     const prof = await getFundProfile(fcode);
-    // target 为空 = 非指数型（页面写"无跟踪标的"）或 F10 未取到
     if (!prof || !prof.target) return null;
 
     const hit = await resolveIndexByName(prof.target);
@@ -732,14 +711,11 @@ async function getIndexQuotes(txCodes) {
   await Promise.all(
     chunk(txCodes, BATCH).map(async function (batch) {
       try {
-        const t = await req('https://qt.gtimg.cn/q=' + batch.join(','), 'https://gu.qq.com/', 4000);
-        const parsed = parseTencent(t);
+        const parsed = parseTencent(await req('https://qt.gtimg.cn/q=' + batch.join(','), 'https://gu.qq.com/', 4000));
         batch.forEach(function (c) {
           if (parsed[c]) result[c] = parsed[c];
         });
-      } catch (e) {
-        /* 放弃该批 */
-      }
+      } catch (e) {}
     })
   );
   return result;

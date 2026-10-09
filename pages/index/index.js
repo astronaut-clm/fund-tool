@@ -3,27 +3,12 @@ const util = require('../../utils/util.js');
 const poller = require('../../utils/poller.js');
 const config = require('../../utils/config.js');
 
-/** 拖拽震动：自带节流，避免快速拖动时连续触发 */
+/** 拖拽震动（80ms 节流，避免快速拖动连续触发） */
 function vibrate(type) {
   const now = Date.now();
   if (now - (vibrate._t || 0) < 80) return;
   vibrate._t = now;
   wx.vibrateShort({ type: type, fail: function () {} });
-}
-
-/** 行情日期 → YYYYMMDD */
-function dayKey(f) {
-  return String(f.lastDayDate || '').replace(/\D/g, '').slice(0, 8);
-}
-
-/** 当日实际涨幅是否已公布 */
-function hasActualPct(f, today) {
-  return f.lastDayPct !== null && f.lastDayPct !== undefined && dayKey(f) === today;
-}
-
-/** 从接口项中取当日涨幅：已公布就用实际值，否则用估算值 */
-function pickPct(f, today) {
-  return hasActualPct(f, today) ? f.lastDayPct : f.estPct;
 }
 
 /** 净值日字符串 → YYYYMMDD */
@@ -32,9 +17,26 @@ function navKey(s) {
 }
 
 /**
- * 未结转的净值日：date > foldDate 且已披露的，按日期升序
- * 用于补结转「当晚没打开 App 而漏掉的交易日」，避免收益永久丢失
+ * 真实涨幅是否已公布：
+ * 1. 最新净值日覆盖行情日（收盘后/周末行情停留时段）；
+ * 2. 9:30 前行情已翻到今日但未开盘（估算恒为 0），已公布净值日即上一交易日；
+ * 3. 无行情日（债券型等）——当日净值公布后才切换
  */
+function hasActualPct(f, today) {
+  if (f.lastDayPct === null || f.lastDayPct === undefined) return false;
+  const navDay = navKey(f.lastDayDate);
+  const quoteDay = navKey(f.dataDate);
+  if (quoteDay && navDay >= quoteDay) return true;
+  if (navDay && navDay < today && util.beforeOpen() && (!quoteDay || quoteDay === today)) return true;
+  return !quoteDay && navDay === today;
+}
+
+/** 取最新涨幅：已公布用实际值，否则用估算值 */
+function pickPct(f, today) {
+  return hasActualPct(f, today) ? f.lastDayPct : f.estPct;
+}
+
+/** 未结转的净值日（date > foldDate 且已披露），按日期升序，用于补结转漏掉的交易日 */
 function missedNavDays(f, foldDate) {
   const out = [];
   (f.navDays || []).forEach(function (d) {
@@ -82,29 +84,30 @@ Page({
   },
 
   onLoad() {
-    this.setData({ maxCodeLen: config.maxCodeLen });
+    this.setData({ maxCodeLen: config.maxCodeLen, history: util.getHistory() });
     this._poller = poller.createPoller({
       interval: config.pollInterval,
       onlyTrading: true,
       guard: () => this.data.funds.length > 0 || this.data.holdRows.length > 0,
       onTick: () => this.load()
     });
-    this.setData({ history: util.getHistory() });
     this.load();
   },
 
   onShow() {
+
     // 从详情页返回：搜索窗口开则刷新 added 状态，关则刷新自选列表
     if (this.data.showResults) {
       if (this.data.results.length) {
         const codes = util.getCodes();
-        const results = this.data.results.map((it) => ({
-          code: it.code,
-          name: it.name,
-          type: it.type,
-          added: codes.indexOf(it.code) >= 0
-        }));
-        this.setData({ results: results });
+        this.setData({
+          results: this.data.results.map((it) => ({
+            code: it.code,
+            name: it.name,
+            type: it.type,
+            added: codes.indexOf(it.code) >= 0
+          }))
+        });
       }
     } else {
       this.load();
@@ -124,7 +127,6 @@ Page({
     this.load(true);
   },
 
-  /** 点击空白处收起搜索并刷新自选列表 */
   onPageTap() {
     if (this.data.showResults) {
       this.setData({ showResults: false, searching: false });
@@ -135,21 +137,19 @@ Page({
   /** 空操作，用于 catchtap 阻止冒泡 */
   noop() {},
 
-  /** 搜索 */
-
+  /* ---------- 搜索 ---------- */
   onInput(e) {
     const key = (e.detail.value || '').trim();
     this.setData({ keyword: e.detail.value || '' });
     if (this._timer) clearTimeout(this._timer);
     if (!key) {
+
       // 清空输入：有历史则展开显示历史，无历史则收起
       this.setData({ results: [], showResults: this.data.history.length > 0, searching: false });
       return;
     }
     this.setData({ showResults: true, searching: true });
-    this._timer = setTimeout(() => {
-      this.doSearch(key);
-    }, config.searchDebounce);
+    this._timer = setTimeout(() => this.doSearch(key), config.searchDebounce);
   },
 
   onSearchBarTap() {
@@ -161,8 +161,7 @@ Page({
   },
 
   doSearch(key) {
-    // 请求序号竞态保护：旧请求晚到直接丢弃
-    const seq = (this._seq || 0) + 1;
+    const seq = (this._seq || 0) + 1; // 竞态保护：旧请求晚到直接丢弃
     this._seq = seq;
     api
       .search(key)
@@ -172,7 +171,7 @@ Page({
         const seen = {};
         const results = [];
         (list || []).forEach((it) => {
-          if (seen[it.code]) return; // 同 code 去重
+          if (seen[it.code]) return;
           seen[it.code] = true;
           results.push({
             code: it.code,
@@ -200,7 +199,6 @@ Page({
     wx.navigateTo({ url: '/pages/detail/detail?code=' + code });
   },
 
-  /** 搜索结果 +/- 自选按钮 */
   onTogglePick(e) {
     const code = e.currentTarget.dataset.code;
     const name = e.currentTarget.dataset.name;
@@ -215,15 +213,12 @@ Page({
         this.setData({ history: util.getHistory() });
       }
     }
-    this.setData({
-      ['results[' + idx + '].added']: !added
-    });
-    this.load(); // 静默刷新自选列表
+    this.setData({ ['results[' + idx + '].added']: !added });
+    this.load();
   },
 
   onPickHistory(e) {
-    const code = e.currentTarget.dataset.code;
-    wx.navigateTo({ url: '/pages/detail/detail?code=' + code });
+    wx.navigateTo({ url: '/pages/detail/detail?code=' + e.currentTarget.dataset.code });
   },
 
   onClearHistory() {
@@ -231,16 +226,17 @@ Page({
     this.setData({ history: [] });
   },
 
-  /** 列表 */
-
+  /* ---------- 列表 ---------- */
   load(isPull) {
     const codes = util.getCodes();
     const holdings = util.getHoldings();
     const holdMap = {};
     holdings.forEach(function (h) { holdMap[h.code] = h; });
-    // 旧持仓行勾选状态（编辑模式下轮询刷新时保留）
+
+    // 编辑模式下轮询刷新时保留旧勾选状态
     const oldHoldMap = {};
     this.data.holdRows.forEach(function (r) { oldHoldMap[r.code] = r; });
+
     // 请求码 = 自选 ∪ 持仓
     const reqCodes = codes.slice();
     holdings.forEach(function (h) {
@@ -262,9 +258,9 @@ Page({
         codes.forEach(function (c) { codeSet[c] = true; });
         const funds = items
           .filter(function (f) { return codeSet[f.code]; })
-          .map(function (f) {
+          .map((f) => {
             const pct = pickPct(f, today);
-            const old = this.data.funds.find(function (it) { return it.code === f.code; });
+            const old = this.data.funds.find((it) => it.code === f.code);
             return {
               code: f.code,
               name: f.name,
@@ -272,10 +268,10 @@ Page({
               cls: util.clsOf(pct),
               selected: old ? !!old.selected : false
             };
-          }.bind(this));
-        // 持仓列表 + 资产汇总
-        // 持有收益 = 截至「已结转净值日(foldDate)」的累计收益，当日净值公布后才结转，且每个净值日只结转一次
-        // 总资产   = Σ(持有金额) + 尚未结转的当日收益
+          });
+
+        // 持有收益 = 截至 foldDate 的累计收益（当日净值公布后结转，每个净值日只结转一次）
+        // 总资产 = Σ(持有金额) + 未结转的当日收益
         let asset = 0;
         let dayProfit = 0;
         let totalProfit = 0;
@@ -288,7 +284,7 @@ Page({
           const p = Number(pct);
           const amount = Number(h.amount) || 0;
           const oldProfit = Number(h.profit) || 0;
-          const dayVal = amount * (Number.isFinite(p) ? p : 0) / 100;
+          const dayVal = (amount * (Number.isFinite(p) ? p : 0)) / 100;
           const navDay = navKey(f.lastDayDate);
           const actualToday = hasActualPct(f, today);
 
@@ -297,29 +293,28 @@ Page({
           let foldDate = h.foldDate || '';
           let foldedToday = false;
 
+          // 首次登记：录入的持有收益即视为截至当前净值日
           if (!foldDate) {
-            // 首次登记：录入的持有收益即视为截至当前净值日，不叠加当日收益
+
             foldDate = navDay;
             foldedToday = actualToday;
           } else {
-            // 补齐漏结转的交易日（收益与持有金额同步推进，否则次日基数会错）
+
+            // 补齐漏结转的交易日（收益与金额同步推进，否则次日基数会错）
             missedNavDays(f, foldDate).forEach(function (d) {
-              const gain = curAmount * d.pct / 100;
+              const gain = (curAmount * d.pct) / 100;
               curAmount += gain;
               curProfit += gain;
               foldDate = d.day;
             });
             foldedToday = actualToday && foldDate === navDay;
           }
-          // 当日收益已结转进持有收益，就不再重复计入「当日收益」
+
+          // 已结转进持有收益的当日收益不再重复计入
           const pendingDay = foldedToday ? 0 : dayVal;
 
           if (foldDate !== (h.foldDate || '') || curAmount !== amount || curProfit !== oldProfit) {
-            updMap[h.code] = Object.assign({}, h, {
-              amount: curAmount,
-              profit: curProfit,
-              foldDate: foldDate
-            });
+            updMap[h.code] = Object.assign({}, h, { amount: curAmount, profit: curProfit, foldDate: foldDate });
           }
           totalProfit += curProfit;
           dayProfit += pendingDay;
@@ -334,14 +329,18 @@ Page({
             selected: oldHoldMap[f.code] ? !!oldHoldMap[f.code].selected : false
           });
         });
-        // 真实涨幅公布后，把更新的持有收益一次性写回 storage
+
+        // 真实涨幅公布后把更新的持有收益写回 storage
         if (Object.keys(updMap).length) {
-          util.setHoldings(util.getHoldings().map(function (h) {
-            return updMap[h.code] || h;
-          }));
+          util.setHoldings(util.getHoldings().map((h) => updMap[h.code] || h));
         }
-        const withDate = items.find(function (f) { return f.dataDate; });
-        const pctDateText = withDate ? util.fmtDataDate(withDate.dataDate) : '';
+
+        // 表头日期：展示真实涨幅时取其净值日（9:30 前为上一交易日），否则取估算行情日
+        const actualItem = items.find(function (f) { return hasActualPct(f, today); });
+        const dateItem = actualItem || items.find(function (f) { return f.dataDate; });
+        const pctDateText = dateItem
+          ? util.fmtDataDate(actualItem ? actualItem.lastDayDate : dateItem.dataDate)
+          : '';
         this.setData({
           funds: funds,
           pctDateText: pctDateText,
@@ -362,21 +361,15 @@ Page({
       });
   },
 
-  /** 拖拽排序 */
-
+  /* ---------- 拖拽排序 ---------- */
   onDragTouchStart(e) {
     const idx = e.currentTarget.dataset.index;
-    const touch = e.touches[0];
-    this._dragStartY = touch.clientY;
+    this._dragStartY = e.touches[0].clientY;
     this._dragItemH = 0;
-    // 测量单项高度，用于算落点位置
-    const q = wx.createSelectorQuery().in(this);
-    q.selectAll('.fund').boundingClientRect();
-    q.exec((res) => {
+    wx.createSelectorQuery().in(this).selectAll('.fund').boundingClientRect().exec((res) => {
       const rects = res && res[0];
       if (rects && rects.length) this._dragItemH = rects[0].height;
     });
-    // 起手反馈；同时初始化 dragOverIndex，避免首次 move 重复震
     vibrate('medium');
     this._dragOverIndex = idx;
     this.setData({ dragIndex: idx, dragOffsetY: 0 });
@@ -385,8 +378,7 @@ Page({
   onDragTouchMove(e) {
     const dragIndex = this.data.dragIndex;
     if (dragIndex < 0) return;
-    const touch = e.touches[0];
-    const dy = touch.clientY - this._dragStartY;
+    const dy = e.touches[0].clientY - this._dragStartY;
     if (!this._dragItemH) return;
     const key = this.data.tab === 'hold' ? 'holdRows' : 'funds';
     const list = this.data[key];
@@ -394,8 +386,9 @@ Page({
     const patch = { dragOffsetY: dy };
     if (overIndex !== this._dragOverIndex) {
       this._dragOverIndex = overIndex;
-      // 重算每项让位位移：dragIndex 与 overIndex 之间的项整体平移一格
+
       const h = this._dragItemH;
+      // dragIndex 与 overIndex 之间的项整体平移一格让位
       patch[key] = list.map(function (it, i) {
         let s = 0;
         if (dragIndex < overIndex) {
@@ -405,7 +398,7 @@ Page({
         }
         return Object.assign({}, it, { shift: s });
       });
-      vibrate('light'); // 越过一项边界
+      vibrate('light');
     }
     this.setData(patch);
   },
@@ -417,19 +410,17 @@ Page({
     const list = this.data[key];
     const patch = { dragIndex: -1, dragOffsetY: 0 };
     if (dragIndex < 0 || dragOverIndex < 0 || dragIndex === dragOverIndex) {
-      // 复位 shift
       patch[key] = list.map(function (it) { return Object.assign({}, it, { shift: 0 }); });
       this.setData(patch);
       return;
     }
     const reordered = list.slice();
     const moved = reordered.splice(dragIndex, 1)[0];
-    moved.shift = 0;
     reordered.splice(dragOverIndex, 0, moved);
-    // 清掉所有 shift
     reordered.forEach(function (it) { it.shift = 0; });
+    // 新顺序写回持仓 storage（未在列表中的持仓排最后，保持原相对顺序）
     if (key === 'holdRows') {
-      // 把新顺序写回持仓 storage（未在列表中的持仓保持原相对顺序排最后）
+
       const order = {};
       reordered.forEach(function (it, i) { order[it.code] = i; });
       util.setHoldings(
@@ -447,15 +438,14 @@ Page({
     }
     patch[key] = reordered;
     this.setData(patch);
-    vibrate('light'); // 落位
+    vibrate('light');
   },
 
   goDetail(e) {
-    const code = e.currentTarget.dataset.code;
-    wx.navigateTo({ url: '/pages/detail/detail?code=' + code });
+    wx.navigateTo({ url: '/pages/detail/detail?code=' + e.currentTarget.dataset.code });
   },
 
-  /** 编辑模式切换（自选 / 持有通用）：进入保留勾选，退出清空 */
+  /** 切换编辑模式（自选/持有通用）：进入保留勾选，退出清空 */
   onToggleEdit() {
     const editMode = !this.data.editMode;
     const map = function (it) {
@@ -473,78 +463,73 @@ Page({
     });
   },
 
-  /** 列表项点击：编辑模式下切换勾选，非编辑模式跳详情 */
+  /** 列表项点击：编辑模式切换勾选，否则跳详情 */
   onFundTap(e) {
-    if (this.data.editMode) {
-      const idx = e.currentTarget.dataset.index;
-      const funds = this.data.funds.slice();
-      funds[idx] = Object.assign({}, funds[idx], { selected: !funds[idx].selected });
-      const selectedCount = funds.filter(function (it) { return it.selected; }).length;
-      this.setData({
-        ['funds[' + idx + '].selected']: funds[idx].selected,
-        selectedCount: selectedCount,
-        allSelected: funds.length > 0 && selectedCount === funds.length
-      });
-    } else {
-      this.goDetail(e);
-    }
+    this.toggleSelect(e, 'funds');
   },
 
-  /** 全选 / 取消全选（当前列表） */
+  onHoldRowTap(e) {
+    this.toggleSelect(e, 'holdRows');
+  },
+
+  toggleSelect(e, key) {
+    if (!this.data.editMode) return this.goDetail(e);
+    const idx = e.currentTarget.dataset.index;
+    const list = this.data[key].slice();
+    list[idx] = Object.assign({}, list[idx], { selected: !list[idx].selected });
+    const selectedCount = list.filter(function (it) { return it.selected; }).length;
+    this.setData({
+      [key + '[' + idx + '].selected']: list[idx].selected,
+      selectedCount: selectedCount,
+      allSelected: list.length > 0 && selectedCount === list.length
+    });
+  },
+
+  /** 全选/取消全选（当前列表） */
   onSelectAll() {
     const key = this.data.tab === 'hold' ? 'holdRows' : 'funds';
     const allSelected = this.data.allSelected;
     const list = this.data[key].map(function (it) {
       return Object.assign({}, it, { selected: !allSelected });
     });
-    const selectedCount = allSelected ? 0 : list.length;
     const patch = {
-      selectedCount: selectedCount,
+      selectedCount: allSelected ? 0 : list.length,
       allSelected: !allSelected
     };
     patch[key] = list;
     this.setData(patch);
   },
 
-  /** 删除已勾选的基金（自选 / 持仓） */
+  /** 删除已勾选的基金（自选/持仓） */
   onDeleteSelected() {
     const isHold = this.data.tab === 'hold';
     const key = isHold ? 'holdRows' : 'funds';
     const selected = this.data[key].filter(function (it) { return it.selected; });
     if (!selected.length) return;
     const codes = selected.map(function (it) { return it.code; });
-    const self = this;
     wx.showModal({
       title: '删除确认',
       content: (isHold ? '确定删除 ' : '确定从自选移除 ') + selected.length + ' 只基金？',
       confirmColor: '#e0403f',
-      success: function (res) {
+      success: (res) => {
         if (!res.confirm) return;
         if (isHold) {
-          util.setHoldings(util.getHoldings().filter(function (h) {
-            return codes.indexOf(h.code) < 0;
-          }));
+          util.setHoldings(util.getHoldings().filter(function (h) { return codes.indexOf(h.code) < 0; }));
         } else {
-          util.setCodes(util.getCodes().filter(function (c) {
-            return codes.indexOf(c) < 0;
-          }));
+          util.setCodes(util.getCodes().filter(function (c) { return codes.indexOf(c) < 0; }));
         }
-        const remainRows = self.data[key].filter(function (it) {
-          return codes.indexOf(it.code) < 0;
-        });
+        const remainRows = this.data[key].filter(function (it) { return codes.indexOf(it.code) < 0; });
         const patch = { selectedCount: 0, allSelected: false };
         patch[key] = remainRows;
-        self.setData(patch);
-        if (!remainRows.length) {
-          self.setData({ editMode: false });
-        }
-        if (isHold) self.load(); // 刷新资产汇总
+        this.setData(patch);
+        if (!remainRows.length) this.setData({ editMode: false });
+        if (isHold) this.load(); // 刷新资产汇总
         wx.showToast({ title: '已删除', icon: 'success' });
       }
     });
   },
 
-  /** 持仓：tab 切换（切换前退出编辑模式并清空勾选） */
+  /** tab 切换（切换前退出编辑模式并清空勾选） */
   switchTab(e) {
     const tab = e.currentTarget.dataset.tab;
     if (!tab || tab === this.data.tab) return;
@@ -552,28 +537,11 @@ Page({
     this.setData({ tab: tab });
   },
 
-  /** 持有列表项点击：编辑模式下切换勾选，非编辑模式跳详情 */
-  onHoldRowTap(e) {
-    if (this.data.editMode) {
-      const idx = e.currentTarget.dataset.index;
-      const holdRows = this.data.holdRows.slice();
-      holdRows[idx] = Object.assign({}, holdRows[idx], { selected: !holdRows[idx].selected });
-      const selectedCount = holdRows.filter(function (it) { return it.selected; }).length;
-      this.setData({
-        ['holdRows[' + idx + '].selected']: holdRows[idx].selected,
-        selectedCount: selectedCount,
-        allSelected: holdRows.length > 0 && selectedCount === holdRows.length
-      });
-    } else {
-      this.goDetail(e);
-    }
-  },
-
+  /* ---------- 持仓弹窗 ---------- */
   /** 长按打开修改弹窗（编辑模式下禁用，避免与勾选冲突） */
   onHoldRowLongPress(e) {
     if (this.data.editMode) return;
-    const code = e.currentTarget.dataset.code;
-    const h = util.getHoldings().find(function (it) { return it.code === code; });
+    const h = util.getHoldings().find((it) => it.code === e.currentTarget.dataset.code);
     if (!h) return;
     this.setData({
       addModalShow: true,
@@ -587,7 +555,6 @@ Page({
     });
   },
 
-  /** 添加持仓：打开弹窗 */
   onAddHolding() {
     this.setData({
       addModalShow: true,
@@ -610,28 +577,21 @@ Page({
       return;
     }
     this.setData({ addSearching: true });
-    this._addTimer = setTimeout(() => {
-      this.lookupAdd(code);
-    }, config.searchDebounce);
+    this._addTimer = setTimeout(() => this.lookupAdd(code), config.searchDebounce);
   },
 
   lookupAdd(code) {
-    const self = this;
     api
       .search(code)
       .then((list) => {
-        if (code !== (self.data.addCode || '').trim()) return;
-        self.setData({ addSearching: false });
+        if (code !== (this.data.addCode || '').trim()) return;
+        this.setData({ addSearching: false });
         const hit = (list || []).find(function (it) { return it.code === code; });
-        if (hit) {
-          self.setData({ addFundName: hit.name, addError: '' });
-        } else {
-          self.setData({ addFundName: '', addError: '未找到该基金' });
-        }
+        this.setData(hit ? { addFundName: hit.name, addError: '' } : { addFundName: '', addError: '未找到该基金' });
       })
       .catch(() => {
-        if (code !== (self.data.addCode || '').trim()) return;
-        self.setData({ addSearching: false, addFundName: '', addError: '查询失败' });
+        if (code !== (this.data.addCode || '').trim()) return;
+        this.setData({ addSearching: false, addFundName: '', addError: '查询失败' });
       });
   },
 
@@ -642,10 +602,8 @@ Page({
   onAddProfitInput(e) {
     let v = (e.detail.value || '').replace(/[^\d.-]/g, '');
     if (v.indexOf('-') > 0) v = v[0] === '-' ? '-' + v.replace(/-/g, '') : v.replace(/-/g, '');
-    const firstDot = v.indexOf('.');
-    if (firstDot >= 0) {
-      v = v.slice(0, firstDot + 1) + v.slice(firstDot + 1).replace(/\./g, '');
-    }
+    const dot = v.indexOf('.');
+    if (dot >= 0) v = v.slice(0, dot + 1) + v.slice(dot + 1).replace(/\./g, '');
     this.setData({ addProfit: v });
   },
 
@@ -659,18 +617,9 @@ Page({
     const amount = Number(this.data.addAmount);
     const profit = Number(this.data.addProfit || 0);
 
-    if (!code) {
-      wx.showToast({ title: '请输入基金代码', icon: 'none' });
-      return;
-    }
-    if (!Number.isFinite(amount) || amount < 0) {
-      wx.showToast({ title: '持有金额不合法', icon: 'none' });
-      return;
-    }
-    if (!Number.isFinite(profit)) {
-      wx.showToast({ title: '持有收益不合法', icon: 'none' });
-      return;
-    }
+    if (!code) return wx.showToast({ title: '请输入基金代码', icon: 'none' });
+    if (!Number.isFinite(amount) || amount < 0) return wx.showToast({ title: '持有金额不合法', icon: 'none' });
+    if (!Number.isFinite(profit)) return wx.showToast({ title: '持有收益不合法', icon: 'none' });
 
     // 修改模式：金额 0 视为删除
     if (this.data.editModeOn && amount === 0) {
@@ -680,10 +629,7 @@ Page({
       wx.showToast({ title: '已删除', icon: 'success' });
       return;
     }
-    if (!this.data.editModeOn && amount <= 0) {
-      wx.showToast({ title: '持有金额需大于0', icon: 'none' });
-      return;
-    }
+    if (!this.data.editModeOn && amount <= 0) return wx.showToast({ title: '持有金额需大于0', icon: 'none' });
 
     util.setHolding(code, name, amount, profit);
     this.closeAddModal();
@@ -691,7 +637,7 @@ Page({
     wx.showToast({ title: '已保存', icon: 'success' });
   },
 
-  /** 齿轮：打开/关闭设置菜单 */
+  /* ---------- 菜单 ---------- */
   onGearTap() {
     this.setData({ menuShow: !this.data.menuShow });
   },
@@ -700,41 +646,35 @@ Page({
     this.setData({ menuShow: false });
   },
 
-  /** 菜单项：云同步 */
   onMenuSync() {
     this.setData({ menuShow: false });
     this.onOpenBackup();
   },
 
-  /** 菜单项：添加持有基金 */
   onMenuAddHolding() {
     this.setData({ menuShow: false });
     this.onAddHolding();
   },
 
-  /** 菜单项：列表设置（进入当前列表编辑模式） */
   onMenuEdit() {
     this.setData({ menuShow: false });
     this.onToggleEdit();
   },
 
-  /* ============ 云备份 ============ */
-
+  /* ---------- 云备份 ---------- */
   /** 点击 ☁：智能同步 */
   onOpenBackup() {
     if (this.data.backupBusy) return;
-    const self = this;
-    self.setData({ backupBusy: true });
+    this.setData({ backupBusy: true });
     wx.cloud.callFunction({
       name: 'backup',
       data: { action: 'info' },
-      success(res) {
+      success: (res) => {
         const r = res && res.result;
-        const remoteTs = (r && r.ok && r.data && r.data.updatedAt) || 0;
-        self.decideSync(remoteTs);
+        this.decideSync((r && r.ok && r.data && r.data.updatedAt) || 0);
       },
-      fail() {
-        self.setData({ backupBusy: false });
+      fail: () => {
+        this.setData({ backupBusy: false });
         wx.showToast({ title: '云同步失败', icon: 'none' });
       }
     });
@@ -745,34 +685,24 @@ Page({
     const holdings = util.getHoldings();
     const hasLocal = codes.length > 0 || holdings.length > 0;
 
-    if (!hasLocal) {
-      this.doRestore();
-      return;
-    }
-    if (!remoteTs) {
-      this.doBackup(codes, holdings);
-      return;
-    }
+    if (!hasLocal) return this.doRestore();
+    if (!remoteTs) return this.doBackup(codes, holdings);
 
     const localNewer = util.getLocalDirtyTs() > util.getBackupTs();
     const remoteNewer = remoteTs > util.getBackupTs();
-
-    if (localNewer) {
-      this.doBackup(codes, holdings);
-    } else if (remoteNewer) {
-      this.doRestore();
-    } else {
+    if (localNewer) this.doBackup(codes, holdings);
+    else if (remoteNewer) this.doRestore();
+    else {
       this.setData({ backupBusy: false });
       wx.showToast({ title: '数据已是最新', icon: 'none' });
     }
   },
 
   doBackup(codes, holdings) {
-    const self = this;
     wx.cloud.callFunction({
       name: 'backup',
       data: { action: 'upload', codes: codes, holdings: holdings },
-      success(res) {
+      success: (res) => {
         const r = res && res.result;
         if (r && r.ok && r.data) {
           util.setBackupTs(r.data.updatedAt);
@@ -782,45 +712,32 @@ Page({
           wx.showToast({ title: '云同步失败', icon: 'none' });
         }
       },
-      fail() {
-        wx.showToast({ title: '云同步失败', icon: 'none' });
-      },
-      complete() {
-        self.setData({ backupBusy: false });
-      }
+      fail: () => wx.showToast({ title: '云同步失败', icon: 'none' }),
+      complete: () => this.setData({ backupBusy: false })
     });
   },
 
   doRestore() {
-    const self = this;
     wx.cloud.callFunction({
       name: 'backup',
       data: { action: 'pull' },
-      success(res) {
+      success: (res) => {
         const r = res && res.result;
-        if (!r || !r.ok) {
-          wx.showToast({ title: '云同步失败', icon: 'none' });
-          return;
-        }
+        if (!r || !r.ok) return wx.showToast({ title: '云同步失败', icon: 'none' });
         const data = r.data;
         if (!data || (!(data.codes && data.codes.length) && !(data.holdings && data.holdings.length))) {
-          wx.showToast({ title: '云端暂无数据', icon: 'none' });
-          return;
+          return wx.showToast({ title: '云端暂无数据', icon: 'none' });
         }
         util.setCodesSilent(data.codes || []);
         util.setHoldingsSilent(data.holdings || []);
         const ts = data.updatedAt || Date.now();
         util.setBackupTs(ts);
         util.touchLocalDirty(ts);
-        self.load();
+        this.load();
         wx.showToast({ title: '已从云端恢复', icon: 'success' });
       },
-      fail() {
-        wx.showToast({ title: '云同步失败', icon: 'none' });
-      },
-      complete() {
-        self.setData({ backupBusy: false });
-      }
+      fail: () => wx.showToast({ title: '云同步失败', icon: 'none' }),
+      complete: () => this.setData({ backupBusy: false })
     });
   }
 });

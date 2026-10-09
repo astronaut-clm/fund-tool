@@ -1,5 +1,5 @@
 <view class="page" bindtap="onPageTap">
-  <!-- 搜索（catchtap 阻止冒泡，避免点搜索框时收起） -->
+  <!-- 搜索（catchtap 阻止冒泡） -->
   <view class="search-bar" catchtap="onSearchBarTap">
     <text class="search-icon">🔍</text>
     <input
@@ -13,7 +13,7 @@
     <text wx:if="{{keyword}}" class="clear-btn" catchtap="onClearSearch">✕</text>
   </view>
 
-  <!-- 搜索历史（搜索时显示，阻止冒泡避免点击历史区域时收起） -->
+  <!-- 搜索历史（catchtap 阻止冒泡） -->
   <view wx:if="{{showResults && history.length}}" class="history" catchtap="noop">
     <view class="history-head">
       <text class="history-title">搜索历史</text>
@@ -30,7 +30,7 @@
     </view>
   </view>
 
-  <!-- 搜索结果（阻止冒泡，点击结果项不收起） -->
+  <!-- 搜索结果（catchtap 阻止冒泡） -->
   <view wx:if="{{showResults && keyword}}" class="results card" catchtap="noop">
     <view wx:if="{{searching}}" class="result-tip">搜索中…</view>
     <view wx:elif="{{!results.length}}" class="result-tip">未找到相关基金</view>
@@ -58,7 +58,7 @@
     </view>
   </view>
 
-  <!-- 资产卡（搜索框下，tab 之上） -->
+  <!-- 资产卡 -->
   <view wx:if="{{!showResults}}" class="asset card" catchtap="noop">
     <view class="asset-item">
       <view class="asset-label">总资产(元)</view>
@@ -85,7 +85,7 @@
       <text wx:if="{{editMode}}" class="action-link delete {{selectedCount ? 'active' : ''}}" catchtap="onDeleteSelected">删除{{selectedCount ? '(' + selectedCount + ')' : ''}}</text>
       <view wx:if="{{!editMode}}" class="gear-wrap">
         <text class="gear {{backupBusy ? 'blinking' : ''}}" catchtap="onGearTap">⚙</text>
-        <!-- 设置菜单：锚定齿轮左下角 -->
+        <!-- 设置菜单 -->
         <view wx:if="{{menuShow}}" class="gear-menu card">
           <view class="menu-item" catchtap="onMenuSync">
             <text class="menu-icon cloud">☁</text>
@@ -116,7 +116,7 @@
     </view>
   </view>
 
-  <!-- 透明遮罩：点击菜单外区域关闭 -->
+  <!-- 菜单遮罩：点击外部关闭 -->
   <view wx:if="{{menuShow}}" class="menu-mask" catchtap="closeMenu"></view>
 
   <!-- 添加持仓弹窗 -->
@@ -237,7 +237,7 @@
     <view wx:if="{{editMode}}" class="edit-hint">勾选基金后可批量删除，拖拽 ≡ 手柄可排序</view>
   </view>
 
-  <!-- 空状态：持有无持仓 或 自选无基金 -->
+  <!-- 空状态 -->
   <view wx:if="{{!showResults && ((tab === 'hold' && !holdRows.length) || (tab === 'watch' && !funds.length))}}" class="empty">
     <view class="empty-art">
       <text class="art-line">帮助您记录</text>

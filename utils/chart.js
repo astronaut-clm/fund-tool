@@ -1,9 +1,10 @@
-/** 分时图绘制 + 触摸命中：接收 canvas node + 走势数据 + 选中点 */
+/** 分时图绘制 + 触摸命中 */
 const PAD_T = 18;
 const PAD_B = 16;
 const PAD_X = 46;
 const PAD_R = 8;
-// 固定时间轴：09:30-11:30 / 13:00-15:00，午休段空白
+
+// 固定时间轴 09:30-11:30 / 13:00-15:00，午休段空白
 const TOTAL_MIN = 240;
 const M_AM_S = 9 * 60 + 30;
 const M_AM_E = 11 * 60 + 30;
@@ -11,13 +12,11 @@ const M_PM_S = 13 * 60;
 const M_PM_E = 15 * 60;
 
 function tToMin(t) {
-  if (!t) return -1;
-  const m = String(t).match(/^(\d{1,2}):(\d{2})/);
-  if (!m) return -1;
-  return Number(m[1]) * 60 + Number(m[2]);
+  const m = String(t || '').match(/^(\d{1,2}):(\d{2})/);
+  return m ? Number(m[1]) * 60 + Number(m[2]) : -1;
 }
 
-/** 时间 → x 轴偏移（0..TOTAL_MIN），午休段返回 -1 表示空白 */
+/** 时间 → x 偏移（0..TOTAL_MIN），非交易时段返回 -1 */
 function tToOffset(t) {
   const min = tToMin(t);
   if (min < 0) return -1;
@@ -26,7 +25,7 @@ function tToOffset(t) {
   return -1;
 }
 
-/** 触摸命中：x（画布内 CSS 像素）→ 最近数据点索引，未命中返回 -1 */
+/** 触摸 x（画布内 CSS 像素）→ 最近数据点索引，未命中返回 -1 */
 function hitTest(trend, x, width) {
   const pts = trend && trend.points;
   if (!pts || pts.length < 2) return -1;
@@ -47,7 +46,6 @@ function hitTest(trend, x, width) {
   return bestIdx;
 }
 
-/** 纯绘制 */
 function drawTrend(canvas, size, trend, selIdx) {
   if (!canvas || !size || !trend || !trend.points || trend.points.length < 2) return;
   const ctx = canvas.getContext('2d');
@@ -79,12 +77,11 @@ function drawTrend(canvas, size, trend, selIdx) {
     return off < 0 ? null : offsetToX(off);
   };
 
-  const lastPct = pts[pts.length - 1].pct;
-  const rising = lastPct >= 0;
+  const rising = pts[pts.length - 1].pct >= 0;
   const mainColor = rising ? '#e0403f' : '#12a05c';
 
-  // 网格
   ctx.lineWidth = 1;
+  // 网格
   ctx.strokeStyle = '#f0f1f3';
   ctx.beginPath();
   for (let g = 0; g <= 4; g++) {
@@ -106,11 +103,12 @@ function drawTrend(canvas, size, trend, selIdx) {
 
   const xs = pts.map(function (p) { return tToX(p.t); });
 
-  // 面积渐变（分段绘制，午休段不连接）
+  // 面积渐变
   const grad = ctx.createLinearGradient(0, PAD_T, 0, PAD_T + chartH);
   grad.addColorStop(0, rising ? 'rgba(224,64,63,0.22)' : 'rgba(18,160,92,0.22)');
   grad.addColorStop(1, rising ? 'rgba(224,64,63,0.02)' : 'rgba(18,160,92,0.02)');
 
+  // 分段绘制（午休段不连接）：先面积后折线
   let segStart = -1;
   function flushAreaSeg(end) {
     if (segStart < 0 || end <= segStart) {
@@ -119,9 +117,7 @@ function drawTrend(canvas, size, trend, selIdx) {
     }
     ctx.beginPath();
     ctx.moveTo(xs[segStart], yAt(pts[segStart].nav));
-    for (let i = segStart + 1; i <= end; i++) {
-      ctx.lineTo(xs[i], yAt(pts[i].nav));
-    }
+    for (let i = segStart + 1; i <= end; i++) ctx.lineTo(xs[i], yAt(pts[i].nav));
     ctx.lineTo(xs[end], PAD_T + chartH);
     ctx.lineTo(xs[segStart], PAD_T + chartH);
     ctx.closePath();
@@ -144,27 +140,16 @@ function drawTrend(canvas, size, trend, selIdx) {
     ctx.stroke();
     segStart = -1;
   }
-
-  // 先面积
-  for (let i = 0; i < pts.length; i++) {
-    if (xs[i] === null) {
-      flushAreaSeg(i - 1);
-    } else if (segStart < 0) {
-      segStart = i;
+  function drawSegments(flush) {
+    for (let i = 0; i < pts.length; i++) {
+      if (xs[i] === null) flush(i - 1);
+      else if (segStart < 0) segStart = i;
     }
+    flush(pts.length - 1);
+    segStart = -1;
   }
-  flushAreaSeg(pts.length - 1);
-
-  // 再折线
-  segStart = -1;
-  for (let i = 0; i < pts.length; i++) {
-    if (xs[i] === null) {
-      flushLineSeg(i - 1);
-    } else if (segStart < 0) {
-      segStart = i;
-    }
-  }
-  flushLineSeg(pts.length - 1);
+  drawSegments(flushAreaSeg);
+  drawSegments(flushLineSeg);
 
   // 左侧刻度
   ctx.font = '10px -apple-system, sans-serif';
@@ -173,8 +158,7 @@ function drawTrend(canvas, size, trend, selIdx) {
   ctx.textBaseline = 'middle';
   for (let g = 0; g <= 4; g++) {
     const v = max - ((max - min) * g) / 4;
-    const y = PAD_T + (chartH * g) / 4;
-    ctx.fillText(((v / trend.prevNav - 1) * 100).toFixed(2) + '%', PAD_X - 6, y);
+    ctx.fillText(((v / trend.prevNav - 1) * 100).toFixed(2) + '%', PAD_X - 6, PAD_T + (chartH * g) / 4);
   }
   ctx.fillStyle = '#6b7280';
   ctx.fillText('0.00%', PAD_X - 6, yBase);

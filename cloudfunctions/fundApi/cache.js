@@ -1,6 +1,7 @@
 /** 进程内极简缓存（云函数实例存活期间有效） */
 const store = new Map();
-// in-flight：同 key 并发请求共享同一个 Promise，避免缓存 miss 时打爆上游
+
+// 同 key 并发请求共享同一 Promise，避免缓存 miss 时打爆上游
 const pending = new Map();
 
 function get(key, ttl) {
@@ -15,10 +16,7 @@ function get(key, ttl) {
 
 function set(key, v) {
   store.set(key, { v: v, t: Date.now() });
-  if (store.size > 1000) {
-    const firstKey = store.keys().next().value;
-    store.delete(firstKey);
-  }
+  if (store.size > 1000) store.delete(store.keys().next().value);
   return v;
 }
 
@@ -28,9 +26,7 @@ async function wrap(key, ttl, producer) {
   if (cached !== undefined) return cached;
 
   const inflight = pending.get(key);
-  if (inflight) {
-    return inflight;
-  }
+  if (inflight) return inflight;
 
   const p = Promise.resolve()
     .then(producer)

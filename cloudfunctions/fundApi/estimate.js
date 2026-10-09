@@ -16,24 +16,22 @@ const TTL = {
   bench: 24 * 60 * 60 * 1000
 };
 
-/** 北京时间 Date（云函数运行在 UTC，需偏移 +8 小时） */
+/** 北京时间（云函数运行在 UTC，需偏移 +8h） */
 function bjDate() {
   return new Date(Date.now() + 8 * 3600 * 1000);
 }
 
 function todayStr() {
   const d = bjDate();
-  const m = String(d.getUTCMonth() + 1).padStart(2, '0');
-  const day = String(d.getUTCDate()).padStart(2, '0');
-  return d.getUTCFullYear() + '-' + m + '-' + day;
+  return d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0') + '-' + String(d.getUTCDate()).padStart(2, '0');
 }
 
 /** 日涨幅缓存 TTL：按北京时间交易时段自适应，净值公布窗口最频繁 */
 function daychgTTL() {
   const h = bjDate().getUTCHours();
   if (h >= 15 && h < 19) return TTL.daychgWait;
-  if (h >= 19 && h < 24) return TTL.daychgHot;
-  if (h >= 0 && h < 9) return TTL.daychgNight;
+  if (h >= 19) return TTL.daychgHot;
+  if (h < 9) return TTL.daychgNight;
   return TTL.daychgTrade;
 }
 
@@ -46,6 +44,7 @@ const BOND_FUND_RE = /债|纯债|信用|利率/;
 function isIndexFund(ftype) {
   return INDEX_FUND_RE.test(String(ftype || ''));
 }
+
 function isBondFund(ftype) {
   return BOND_FUND_RE.test(String(ftype || ''));
 }
@@ -82,33 +81,32 @@ function calcByStocks(stocks, quotes) {
   }
   if (coverage <= 0) return null;
 
-  const estPct = sumWR / coverage;
   return {
     coverage: round(coverage * 100, 2),
-    estPct: round(estPct, 3),
+    estPct: round(sumWR / coverage, 3),
     stocks: list
   };
 }
 
-async function fetchInfo(code) {
+function fetchInfo(code) {
   return cache.wrap('info:' + code, TTL.info, function () {
     return em.getFundInfo(code);
   });
 }
 
-async function fetchBenchmarkIndex(code) {
+function fetchBenchmarkIndex(code) {
   return cache.wrap('bench:' + code, TTL.bench, function () {
     return em.getBenchmarkIndex(code);
   });
 }
 
-async function fetchHoldings(code) {
+function fetchHoldings(code) {
   return cache.wrap('hold:' + code, TTL.holdings, function () {
     return em.getHoldings(code);
   });
 }
 
-async function fetchTrend(secidOrTx) {
+function fetchTrend(secidOrTx) {
   return cache.wrap('trend:' + secidOrTx, TTL.trend, function () {
     return em.getTrend(secidOrTx);
   });
@@ -185,7 +183,7 @@ async function estimateOne(code, info, quotes, withStocks, holdings, bench) {
   const isIndex = isIndexFund(base.ftype);
 
   // 指数型：优先用跟踪指数涨跌幅（基准仓位约 95%，幅度可偏大约 5%）
-  // txCode 为空代表是 CSI* 中证主题指数等腾讯无行情的标的，降级走持仓加权
+  // txCode 为空代表 CSI* 等腾讯无行情的标的，降级走持仓加权
   if (isIndex && bench && bench.txCode) {
     const q = quotes && quotes[bench.txCode];
     if (q && Number.isFinite(q.pct)) {
@@ -209,11 +207,13 @@ async function estimateOne(code, info, quotes, withStocks, holdings, bench) {
   }
 
   const nav = base.prevNav;
+
   // 指数/ETF/联接基金前十覆盖度天然偏低，放宽阈值不卡 30%
   const looseCoverage = isIndex;
 
   if (holdings && holdings.stocks && holdings.stocks.length) {
     base.holdingsPeriod = holdings.period;
+
     // 至少一只重仓股行情有效才自建，避免用全 0 行情算出假 0.00%
     const hasQuote = holdings.stocks.some(function (s) {
       const q = quotes && (quotes[s.secid] || quotes[s.code]);
@@ -248,7 +248,7 @@ async function estimateFunds(codes, withStocks) {
   const list = (codes || []).filter(Boolean).slice(0, 20);
   if (!list.length) return [];
 
-  // 1. 基本信息（并发，缓存 24h）
+  // 基本信息（并发，缓存 24h）
   const infos = {};
   await Promise.all(
     list.map(async function (code) {
@@ -257,7 +257,7 @@ async function estimateFunds(codes, withStocks) {
     })
   );
 
-  // 2. 季报持仓（并发，缓存 6h）
+  // 季报持仓（并发，缓存 6h）
   const holdingsMap = {};
   await Promise.all(
     list.map(async function (code) {
@@ -266,7 +266,7 @@ async function estimateFunds(codes, withStocks) {
     })
   );
 
-  // 3. 跟踪指数：仅指数型基金（蛋卷 API，缓存 24h）
+  // 跟踪指数：仅指数型基金（缓存 24h）
   const benchMap = {};
   await Promise.all(
     list.map(async function (code) {
@@ -277,7 +277,7 @@ async function estimateFunds(codes, withStocks) {
     })
   );
 
-  // 4. 行情：重仓股（按 secid）+ 指数（按 txCode），二级缓存避免组合 key 碎片化
+  // 行情：重仓股（按 secid）+ 指数（按 txCode），二级缓存避免组合 key 碎片化
   const secidSet = {};
   Object.keys(holdingsMap).forEach(function (code) {
     holdingsMap[code].stocks.forEach(function (s) {
@@ -293,6 +293,7 @@ async function estimateFunds(codes, withStocks) {
 
   let quotes = {};
   if (secids.length) {
+
     // 只缓存 secid 键，避免 getQuotes 返回的双索引（secid / 纯 code）重复入缓存
     quotes = await fetchQuotesWithCache(secids, em.getQuotes, function (k) {
       return k.indexOf('.') > 0;
@@ -302,7 +303,7 @@ async function estimateFunds(codes, withStocks) {
     Object.assign(quotes, await fetchQuotesWithCache(txOnlyCodes, em.getIndexQuotes));
   }
 
-  // 5. 逐只计算
+  // 逐只计算
   const results = await Promise.all(
     list.map(function (code) {
       return estimateOne(code, infos[code], quotes, withStocks, holdingsMap[code], benchMap[code]).catch(function (e) {
@@ -354,6 +355,7 @@ async function attachIndustries(results) {
 /**
  * 当日估算净值走势（分钟级）
  * 指数型有跟踪指数：直接用指数分时；否则重仓股分时加权合成
+ * 当日真实涨幅公布后，末点修正为真实值（中间点仍为估算分时）
  */
 async function estimateTrend(code) {
   const info = await fetchInfo(code);
@@ -365,8 +367,8 @@ async function estimateTrend(code) {
 
   const isIndex = isIndexFund(info && info.ftype);
 
-  // 指数型：直接用跟踪指数分时
   if (isIndex) {
+    // 指数型：直接用跟踪指数分时
     const bench = await fetchBenchmarkIndex(code);
     if (bench && bench.txCode) {
       const t = await fetchTrend(bench.txCode);
@@ -374,11 +376,12 @@ async function estimateTrend(code) {
         const points = t.points.map(function (p) {
           return { t: p.t, pct: round(p.pct, 3), nav: round(prevNav * (1 + p.pct / 100), 4) };
         });
+
         // 优先用指数介绍（腾讯），无则用基金投资目标（蛋卷）
-        const benchDesc = t.introduce || bench.desc || '';
-        const result = { prevNav: prevNav, points: points, date: t.date, benchDesc: benchDesc };
-        // 用实时行情修正末点，使走势末值与估算涨幅一致
-        await patchLastPoint(result, [bench.txCode], { isIndex: true });
+        const result = { prevNav: prevNav, points: points, date: t.date, benchDesc: t.introduce || bench.desc || '' };
+        if (!patchActualLast(result, last)) {
+          await patchLastPoint(result, [bench.txCode], { isIndex: true });
+        }
         return result;
       }
     }
@@ -387,6 +390,7 @@ async function estimateTrend(code) {
   const holdings = await fetchHoldings(code);
   if (!holdings || !holdings.stocks || !holdings.stocks.length) return null;
 
+  // 指数/ETF/联接基金前十覆盖度天然偏低，放宽阈值不卡 30%
   const looseCoverage = isIndex;
 
   const trends = {};
@@ -449,35 +453,56 @@ async function estimateTrend(code) {
   }
   if (points.length < 2) return null;
 
-  // 用实时行情修正末点，使走势末值与估算涨幅一致
   const result = { prevNav: prevNav, points: points, date: trendDate };
   const secids = valid.map(function (s) { return s.secid; });
-  await patchLastPoint(result, secids, { isIndex: false, stocks: valid });
+  if (!patchActualLast(result, last)) {
+    await patchLastPoint(result, secids, { isIndex: false, stocks: valid });
+  }
   return result;
 }
 
+/** 未公布时用实时行情修正末点为估算涨幅；失败保留分时原始末点 */
 async function patchLastPoint(result, fetchKeys, opts) {
   try {
     let estPct = null;
     if (opts.isIndex) {
-      // fetchKeys = [txCode]
       const q = await em.getIndexQuotes(fetchKeys);
       const v = q && q[fetchKeys[0]];
       if (v && Number.isFinite(v.pct)) estPct = v.pct;
     } else if (opts.stocks && opts.stocks.length) {
-      // fetchKeys = [secid...]
       const q = await em.getQuotes(fetchKeys);
       const r = calcByStocks(opts.stocks, q);
       if (r) estPct = r.estPct;
     }
     if (estPct === null || !Number.isFinite(estPct)) return;
-    const pts = result.points;
-    const last = pts[pts.length - 1];
+    const last = result.points[result.points.length - 1];
     last.pct = round(estPct, 3);
     last.nav = round(result.prevNav * (1 + estPct / 100), 4);
-  } catch (e) {
-    // 失败则保留分时原始末点
-  }
+  } catch (e) {}
+}
+
+function dateKey(s) {
+  return String(s || '').replace(/\D/g, '').slice(0, 8);
+}
+
+/**
+ * 当日真实涨幅已公布（最新净值日 = 走势日）：末点改用真实值，
+ * 并把基准切回上一净值日（公布后 last.nav 已是当日净值，不再是昨收）。
+ * 未公布返回 false，由调用方回退实时行情的估算修正
+ */
+function patchActualLast(result, last) {
+  const pct = last ? Number(last.pct) : NaN;
+  if (!Number.isFinite(pct) || dateKey(last.date) !== dateKey(result.date)) return false;
+  const prev = last.days && last.days[1] && Number(last.days[1].nav);
+  const base = Number.isFinite(prev) && prev > 0 ? prev : result.prevNav;
+  result.prevNav = base;
+  result.points.forEach(function (p) {
+    p.nav = round(base * (1 + p.pct / 100), 4);
+  });
+  const tail = result.points[result.points.length - 1];
+  tail.pct = round(pct, 3);
+  tail.nav = round(base * (1 + pct / 100), 4);
+  return true;
 }
 
 module.exports = { estimateFunds: estimateFunds, estimateTrend: estimateTrend };

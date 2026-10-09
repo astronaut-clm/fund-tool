@@ -1,10 +1,8 @@
 /** 云函数调用封装（第三方接口需域名白名单，统一走云函数代理） */
-const FUNCTION_NAME = 'fundApi';
-
 function call(action, data) {
   return wx.cloud
     .callFunction({
-      name: FUNCTION_NAME,
+      name: 'fundApi',
       data: Object.assign({ action: action }, data || {})
     })
     .then(function (res) {
@@ -22,12 +20,12 @@ function call(action, data) {
     });
 }
 
-/** 基金搜索联想 */
+/** 搜索联想 */
 function search(key) {
   return call('search', { key: key });
 }
 
-/** 估值（withStocks=true 返回前十大持仓明细，详情页用） */
+/** 估值（withStocks=true 返回前十大持仓明细） */
 function estimate(codes, withStocks) {
   return call('estimate', { codes: codes, withStocks: !!withStocks });
 }
