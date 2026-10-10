@@ -162,14 +162,11 @@ function beforeOpen(d) {
   return now.getHours() * 60 + now.getMinutes() < 9 * 60 + 30;
 }
 
-/** 千分位 + 2 位小数 */
+/** 保留 2 位小数 */
 function fmtMoney(n) {
   const v = Number(n);
   if (!Number.isFinite(v)) return '--';
-  const neg = v < 0;
-  const parts = Math.abs(v).toFixed(2).split('.');
-  parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-  return (neg ? '-' : '') + parts.join('.');
+  return (v < 0 ? '-' : '') + Math.abs(v).toFixed(2);
 }
 
 /* ---------- 持仓 ---------- */

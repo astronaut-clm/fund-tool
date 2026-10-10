@@ -391,9 +391,16 @@
 }
 
 .asset-item {
+  flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 8rpx;
+}
+
+.asset-item:nth-child(2) {
+  text-align: center;
+  align-items: center;
 }
 
 .asset-item.right {
@@ -407,10 +414,10 @@
 }
 
 .asset-value {
-  font-size: 44rpx;
+  white-space: nowrap;
+  font-size: inherit;
   font-weight: 700;
   color: #1f2329;
-  letter-spacing: 1rpx;
 }
 
 .asset-value.up { color: #e0403f; }

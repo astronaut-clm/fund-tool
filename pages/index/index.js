@@ -21,6 +21,11 @@ function roundMoney(n) {
   return Number(n.toFixed(2));
 }
 
+function assetValueFontSize(values) {
+  const longest = Math.max.apply(null, values.map(function (value) { return value.length; }));
+  return Math.min(44, Math.floor(350 / longest));
+}
+
 /** 当前没有今日有效行情时，使用最近已披露的净值日 */
 function useLastNav(f, today) {
   const now = new Date();
@@ -77,6 +82,7 @@ Page({
     tab: 'hold',
     holdRows: [],
     assetText: '0.00',
+    assetValueFontSize: 44,
     profitText: '0.00',
     profitLabel: '今日收益',
     profitCls: 'flat',
@@ -270,7 +276,7 @@ Page({
     if (!reqCodes.length) {
       this.setData({
         funds: [], holdRows: [], pctDateText: '', selectedCount: 0,
-        assetText: '0.00', profitText: '0.00', profitLabel: '今日收益', profitCls: 'flat', totalProfitText: '0.00', totalProfitCls: 'flat'
+        assetText: '0.00', assetValueFontSize: 44, profitText: '0.00', profitLabel: '今日收益', profitCls: 'flat', totalProfitText: '0.00', totalProfitCls: 'flat'
       });
       if (isPull) wx.stopPullDownRefresh();
       return Promise.resolve();
@@ -407,16 +413,20 @@ Page({
           ? util.fmtDataDate(navMax)
           : util.fmtDataDate(quoteMax || navMax);
         const selectedRows = this.data.tab === 'hold' ? holdRows : funds;
+        const assetText = util.fmtMoney(asset);
+        const profitText = hasDayProfit ? (dayProfit >= 0 ? '+' : '') + util.fmtMoney(dayProfit) : '--';
+        const totalProfitText = (totalProfit >= 0 ? '+' : '') + util.fmtMoney(totalProfit);
         this.setData({
           funds: funds,
           pctDateText: pctDateText,
           selectedCount: selectedRows.filter(function (it) { return it.selected; }).length,
           holdRows: holdRows,
-          assetText: util.fmtMoney(asset),
+          assetText: assetText,
+          assetValueFontSize: assetValueFontSize([assetText, totalProfitText, profitText]),
           profitLabel: olderThanYesterday ? '最近收益' : showingPrevious ? '昨日收益' : '今日收益',
-          profitText: hasDayProfit ? (dayProfit >= 0 ? '+' : '') + util.fmtMoney(dayProfit) : '--',
+          profitText: profitText,
           profitCls: util.clsOf(dayProfit),
-          totalProfitText: (totalProfit >= 0 ? '+' : '') + util.fmtMoney(totalProfit),
+          totalProfitText: totalProfitText,
           totalProfitCls: util.clsOf(totalProfit)
         });
       })

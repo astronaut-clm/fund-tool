@@ -58,7 +58,7 @@
     </view>
   </view>
 
-  <view wx:if="{{!showResults}}" class="asset card" catchtap="noop">
+  <view wx:if="{{!showResults}}" class="asset card" style="font-size: {{assetValueFontSize}}rpx;" catchtap="noop">
     <view class="asset-item">
       <view class="asset-label">总资产(元)</view>
       <view class="asset-value">{{assetText}}</view>
