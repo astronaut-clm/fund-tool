@@ -68,7 +68,7 @@
       <view class="asset-value {{totalProfitCls}}">{{totalProfitText}}</view>
     </view>
     <view class="asset-item right">
-      <view class="asset-label">当日收益</view>
+      <view class="asset-label">{{profitLabel}}</view>
       <view class="asset-value {{profitCls}}">{{profitText}}</view>
     </view>
   </view>
@@ -159,8 +159,8 @@
       </view>
       <view class="fund holdings-editor-row">
         <input class="fund-name holdings-add-input" type="number" maxlength="6" value="{{holdingAddCode}}" placeholder="输入基金代码新增" bindinput="onHoldingAddInput" />
-        <text class="fund-pct profit-col holdings-add-default">0</text>
-        <text class="fund-pct pct-col holdings-add-default">0</text>
+        <text class="fund-pct profit-col holdings-add-default">0.00</text>
+        <text class="fund-pct pct-col holdings-add-default">0.00</text>
         <text wx:if="{{holdingAddSearching || holdingAddError}}" class="holdings-editor-error">{{holdingAddSearching ? '查询中…' : holdingAddError}}</text>
       </view>
     </view>

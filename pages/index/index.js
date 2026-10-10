@@ -17,24 +17,29 @@ function navKey(s) {
   return t.length >= 8 ? t.slice(0, 8) : '';
 }
 
-/**
- * 真实涨幅是否已公布：
- * 1. 最新净值日覆盖行情日（收盘后/周末行情停留时段）；
- * 2. 9:30 前行情已翻到今日但未开盘（估算恒为 0），已公布净值日即上一交易日；
- * 3. 无行情日（债券型等）——当日净值公布后才切换
- */
-function hasActualPct(f, today) {
-  if (f.lastDayPct === null || f.lastDayPct === undefined) return false;
-  const navDay = navKey(f.lastDayDate);
-  const quoteDay = navKey(f.dataDate);
-  if (quoteDay && navDay >= quoteDay) return true;
-  if (navDay && navDay < today && util.beforeOpen() && (!quoteDay || quoteDay === today)) return true;
-  return !quoteDay && navDay === today;
+function roundMoney(n) {
+  return Number(n.toFixed(2));
 }
 
-/** 取最新涨幅：已公布用实际值，否则用估算值 */
+/** 当前没有今日有效行情时，使用最近已披露的净值日 */
+function useLastNav(f, today) {
+  const now = new Date();
+  const quoteDay = navKey(f.dataDate);
+  return util.beforeOpen(now) || now.getDay() === 0 || now.getDay() === 6 || quoteDay !== today;
+}
+
+/** 已披露净值覆盖行情日，或今日尚无有效行情 */
+function hasActualPct(f, today) {
+  const navDay = navKey(f.lastDayDate);
+  if (!navDay || f.lastDayPct === null || f.lastDayPct === undefined) return false;
+  const quoteDay = navKey(f.dataDate);
+  return (quoteDay && navDay >= quoteDay) || useLastNav(f, today);
+}
+
+/** 取当前展示涨幅；休市且没有已披露净值时不沿用过期估算 */
 function pickPct(f, today) {
-  return hasActualPct(f, today) ? f.lastDayPct : f.estPct;
+  if (hasActualPct(f, today)) return f.lastDayPct;
+  return useLastNav(f, today) ? null : f.estPct;
 }
 
 /** 未结转的净值日（date > foldDate 且已披露），按日期升序，用于补结转漏掉的交易日 */
@@ -73,6 +78,7 @@ Page({
     holdRows: [],
     assetText: '0.00',
     profitText: '0.00',
+    profitLabel: '当日收益',
     profitCls: 'flat',
     totalProfitText: '0.00',
     totalProfitCls: 'flat',
@@ -264,7 +270,7 @@ Page({
     if (!reqCodes.length) {
       this.setData({
         funds: [], holdRows: [], pctDateText: '', selectedCount: 0,
-        assetText: '0.00', profitText: '0.00', profitCls: 'flat', totalProfitText: '0.00', totalProfitCls: 'flat'
+        assetText: '0.00', profitText: '0.00', profitLabel: '当日收益', profitCls: 'flat', totalProfitText: '0.00', totalProfitCls: 'flat'
       });
       if (isPull) wx.stopPullDownRefresh();
       return Promise.resolve();
@@ -299,28 +305,38 @@ Page({
             };
           });
 
-        // 持有收益 = 截至 foldDate 的累计收益（当日净值公布后结转，每个净值日只结转一次）
-        // 总资产 = Σ(持有金额) + 未结转的当日收益
+        // 持有收益 = 截至 foldDate 的累计收益；总资产只加尚未结转的收益
         let asset = 0;
         let dayProfit = 0;
         let totalProfit = 0;
+        let hasDayProfit = false;
+        let showingPrevious = false;
+        let olderThanYesterday = false;
+        const previousDate = new Date();
+        previousDate.setDate(previousDate.getDate() - 1);
+        const yesterday = util.todayStr(previousDate);
         const holdRows = [];
         const updMap = {};
         holdings.forEach(function (h) {
           const f = byCode.get(h.code);
           if (!f) return;
           const pct = pickPct(f, today);
-          const p = Number(pct);
-          const amount = Number(h.amount) || 0;
-          const oldProfit = Number(h.profit) || 0;
-          const dayVal = (amount * (Number.isFinite(p) ? p : 0)) / 100;
+          const hasPct = pct !== null && pct !== undefined && Number.isFinite(Number(pct));
+          const p = hasPct ? Number(pct) : 0;
+          const amount = roundMoney(Number(h.amount) || 0);
+          const oldProfit = roundMoney(Number(h.profit) || 0);
+          const dayVal = roundMoney((amount * p) / 100);
           const navDay = navKey(f.lastDayDate);
           const actualToday = hasActualPct(f, today);
+          if (actualToday && navDay < today) showingPrevious = true;
+          if (actualToday && navDay < yesterday) olderThanYesterday = true;
+          if (!actualToday && useLastNav(f, today)) olderThanYesterday = true;
 
           let curAmount = amount;
           let curProfit = oldProfit;
           let foldDate = h.foldDate || '';
           let foldedToday = false;
+          let lastNavGain = null;
 
           // 首次登记：录入的持有收益即视为截至当前净值日
           if (!foldDate) {
@@ -329,30 +345,38 @@ Page({
           } else {
             // 补齐漏结转的交易日（收益与金额同步推进，否则次日基数会错）
             missedNavDays(f, foldDate).forEach(function (d) {
-              const gain = (curAmount * d.pct) / 100;
-              curAmount += gain;
-              curProfit += gain;
+              const gain = roundMoney((curAmount * d.pct) / 100);
+              curAmount = roundMoney(curAmount + gain);
+              curProfit = roundMoney(curProfit + gain);
               foldDate = d.day;
+              if (d.day === navDay) lastNavGain = gain;
             });
             foldedToday = actualToday && foldDate === navDay;
           }
 
-          // 已结转进持有收益的当日收益不再重复计入
+          // 展示已结转的净值日收益，但不再次加入总资产
           const pendingDay = foldedToday ? 0 : dayVal;
+          const shownDay = !hasPct ? null : !foldedToday ? pendingDay
+            : !h.foldDate ? null
+              : lastNavGain !== null ? lastNavGain
+                : p > -100 ? roundMoney((curAmount * p) / (100 + p)) : null;
 
-          if (foldDate !== (h.foldDate || '') || curAmount !== amount || curProfit !== oldProfit) {
+          if (foldDate !== (h.foldDate || '') || curAmount !== Number(h.amount) || curProfit !== Number(h.profit)) {
             updMap[h.code] = Object.assign({}, h, { amount: curAmount, profit: curProfit, foldDate: foldDate });
           }
           totalProfit += curProfit;
-          dayProfit += pendingDay;
+          if (shownDay !== null) {
+            dayProfit += shownDay;
+            hasDayProfit = true;
+          }
           asset += curAmount + pendingDay;
           holdRows.push({
             code: f.code,
             name: f.name,
             pctText: util.fmtPct(pct),
             cls: util.clsOf(pct),
-            profitText: (pendingDay >= 0 ? '+' : '') + util.fmtMoney(pendingDay),
-            profitCls: util.clsOf(pendingDay),
+            profitText: shownDay === null ? '--' : (shownDay >= 0 ? '+' : '') + util.fmtMoney(shownDay),
+            profitCls: util.clsOf(shownDay),
             selected: oldHoldMap[f.code] ? !!oldHoldMap[f.code].selected : false
           });
         });
@@ -389,7 +413,8 @@ Page({
           selectedCount: selectedRows.filter(function (it) { return it.selected; }).length,
           holdRows: holdRows,
           assetText: util.fmtMoney(asset),
-          profitText: (dayProfit >= 0 ? '+' : '') + util.fmtMoney(dayProfit),
+          profitLabel: olderThanYesterday ? '最近收益' : showingPrevious ? '昨日收益' : '当日收益',
+          profitText: hasDayProfit ? (dayProfit >= 0 ? '+' : '') + util.fmtMoney(dayProfit) : '--',
           profitCls: util.clsOf(dayProfit),
           totalProfitText: (totalProfit >= 0 ? '+' : '') + util.fmtMoney(totalProfit),
           totalProfitCls: util.clsOf(totalProfit)
@@ -629,7 +654,11 @@ Page({
       holdingAddError: '',
       holdingAddSearching: false,
       holdingsDraft: holdings.map(function (h) {
-        return { code: h.code, name: h.name || h.code, amount: String(h.amount), profit: String(h.profit || 0), error: '' };
+        return {
+          code: h.code, name: h.name || h.code,
+          amount: roundMoney(Number(h.amount) || 0).toFixed(2),
+          profit: roundMoney(Number(h.profit) || 0).toFixed(2), error: ''
+        };
       })
     });
   },
@@ -667,7 +696,7 @@ Page({
         return;
       }
       this.setData({
-        holdingsDraft: this.data.holdingsDraft.concat({ code: code, name: hit.name, amount: '0', profit: '0', error: '' }),
+        holdingsDraft: this.data.holdingsDraft.concat({ code: code, name: hit.name, amount: '0.00', profit: '0.00', error: '' }),
         holdingAddCode: '', holdingAddSearching: false, holdingAddError: ''
       });
     }).catch(() => {
@@ -729,12 +758,17 @@ Page({
         invalid = true;
         return;
       }
+      const roundedAmount = roundMoney(amount);
+      const roundedProfit = roundMoney(profit);
       const old = byCode.get(row.code);
+      const changed = old && (roundedAmount !== roundMoney(Number(old.amount)) || roundedProfit !== roundMoney(Number(old.profit)));
       // 改动的金额或收益重新建立结转基准，未改动的保留原 foldDate。
       next.set(row.code, old
-        ? (amount === Number(old.amount) && profit === Number(old.profit)
-          ? old : Object.assign({}, old, { amount: amount, profit: profit, foldDate: '' }))
-        : { code: row.code, name: row.name, amount: amount, profit: profit, foldDate: '' });
+        ? (!changed && old.amount === roundedAmount && old.profit === roundedProfit ? old
+          : Object.assign({}, old, {
+            amount: roundedAmount, profit: roundedProfit, foldDate: changed ? '' : old.foldDate
+          }))
+        : { code: row.code, name: row.name, amount: roundedAmount, profit: roundedProfit, foldDate: '' });
     });
     if (invalid) {
       this.setData(Object.assign(errors, { holdingsError: '请检查标红的金额或收益' }));
