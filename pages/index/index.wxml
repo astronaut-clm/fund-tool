@@ -139,8 +139,6 @@
         >≡</view>
       </view>
     </view>
-
-    <view wx:if="{{editMode}}" class="edit-hint">勾选基金后可批量删除，拖拽 ≡ 手柄可排序</view>
   </view>
 
   <view wx:if="{{!showResults && tab === 'hold' && holdingsEdit}}" class="list" catchtap="noop">
@@ -158,10 +156,12 @@
         <text wx:if="{{item.error}}" class="holdings-editor-error">{{item.error}}</text>
       </view>
       <view class="fund holdings-editor-row">
-        <input class="fund-name holdings-add-input" type="number" maxlength="6" value="{{holdingAddCode}}" placeholder="输入基金代码新增" bindinput="onHoldingAddInput" />
+        <view class="fund-name holdings-add-name">
+          <input class="holdings-add-input" type="number" maxlength="6" value="{{holdingAddCode}}" placeholder="基金代码" bindinput="onHoldingAddInput" />
+          <text wx:if="{{holdingAddSearching || holdingAddError}}" class="holdings-add-status {{holdingAddSearching ? 'searching' : ''}}">{{holdingAddSearching ? '查询中…' : holdingAddError}}</text>
+        </view>
         <text class="fund-pct profit-col holdings-add-default">0.00</text>
         <text class="fund-pct pct-col holdings-add-default">0.00</text>
-        <text wx:if="{{holdingAddSearching || holdingAddError}}" class="holdings-editor-error">{{holdingAddSearching ? '查询中…' : holdingAddError}}</text>
       </view>
     </view>
   </view>
@@ -198,8 +198,6 @@
         >≡</view>
       </view>
     </view>
-
-    <view wx:if="{{editMode}}" class="edit-hint">勾选基金后可批量删除，拖拽 ≡ 手柄可排序</view>
   </view>
 
   <view wx:if="{{!holdingsEdit && !showResults && ((tab === 'hold' && !holdRows.length) || (tab === 'watch' && !funds.length))}}" class="empty">

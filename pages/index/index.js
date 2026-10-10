@@ -78,7 +78,7 @@ Page({
     holdRows: [],
     assetText: '0.00',
     profitText: '0.00',
-    profitLabel: '当日收益',
+    profitLabel: '今日收益',
     profitCls: 'flat',
     totalProfitText: '0.00',
     totalProfitCls: 'flat',
@@ -270,7 +270,7 @@ Page({
     if (!reqCodes.length) {
       this.setData({
         funds: [], holdRows: [], pctDateText: '', selectedCount: 0,
-        assetText: '0.00', profitText: '0.00', profitLabel: '当日收益', profitCls: 'flat', totalProfitText: '0.00', totalProfitCls: 'flat'
+        assetText: '0.00', profitText: '0.00', profitLabel: '今日收益', profitCls: 'flat', totalProfitText: '0.00', totalProfitCls: 'flat'
       });
       if (isPull) wx.stopPullDownRefresh();
       return Promise.resolve();
@@ -413,7 +413,7 @@ Page({
           selectedCount: selectedRows.filter(function (it) { return it.selected; }).length,
           holdRows: holdRows,
           assetText: util.fmtMoney(asset),
-          profitLabel: olderThanYesterday ? '最近收益' : showingPrevious ? '昨日收益' : '当日收益',
+          profitLabel: olderThanYesterday ? '最近收益' : showingPrevious ? '昨日收益' : '今日收益',
           profitText: hasDayProfit ? (dayProfit >= 0 ? '+' : '') + util.fmtMoney(dayProfit) : '--',
           profitCls: util.clsOf(dayProfit),
           totalProfitText: (totalProfit >= 0 ? '+' : '') + util.fmtMoney(totalProfit),
